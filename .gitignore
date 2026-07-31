@@ -1,0 +1,11 @@
+.DS_Store
+
+/build/
+/outputs/
+/packages/
+/data/
+
+__pycache__/
+*.pyc
+
+*.log
