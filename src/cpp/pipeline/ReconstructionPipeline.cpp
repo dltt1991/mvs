@@ -79,7 +79,11 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
   const auto sparseModel = sparseDir / "0";
   const auto scene = openMvsDir / "scene.mvs";
   const auto denseScene = openMvsDir / "scene_dense.mvs";
-  const auto meshScene = openMvsDir / "scene_mesh.mvs";
+  // OpenMVS 的 interface 模式（--archive-type 默认 -1）下，.mvs 只承载相机与位姿，
+  // 几何数据落在同名 .ply 里，由下游工具通过 --pointcloud-file / --mesh-file 显式加载。
+  // 因此 ReconstructMesh / TextureMesh 都不会重写 .mvs，产物是 .ply。
+  const auto meshPly = openMvsDir / "scene_mesh.ply";
+  const auto texturePly = openMvsDir / "scene_texture.ply";
 
   const auto cameraParams =
       number(camera.f) + "," + number(camera.cx) + "," + number(camera.cy) + "," + number(camera.k1);
@@ -153,14 +157,16 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
       "reconstruct_mesh",
       "OpenMVS：ReconstructMesh 生成三角网格",
       withBinary(openMvsTool(config, "ReconstructMesh"),
-                 {denseScene.string(), "--working-folder", openMvsDir.string(), "--output-file", meshScene.filename().string()}),
+                 {denseScene.string(), "--working-folder", openMvsDir.string(), "--output-file", meshPly.filename().string()}),
       logsDir));
 
   plan.stages.push_back(stage(
       "texture_mesh",
       "OpenMVS：TextureMesh 生成纹理模型",
       withBinary(openMvsTool(config, "TextureMesh"),
-                 {meshScene.string(), "--working-folder", openMvsDir.string(), "--output-file", "scene_texture.mvs"}),
+                 {denseScene.string(), "--working-folder", openMvsDir.string(),
+                  "--mesh-file", meshPly.filename().string(),
+                  "--output-file", texturePly.filename().string()}),
       logsDir));
 
   return plan;
@@ -193,8 +199,8 @@ int runPipeline(const Config& config) {
   manifest.artifacts["colmap_dense"] = (plan.workspaceDir / "colmap" / "dense").string();
   manifest.artifacts["openmvs_scene"] = (plan.workspaceDir / "openmvs" / "scene.mvs").string();
   manifest.artifacts["openmvs_dense"] = (plan.workspaceDir / "openmvs" / "scene_dense.mvs").string();
-  manifest.artifacts["openmvs_mesh"] = (plan.workspaceDir / "openmvs" / "scene_mesh.mvs").string();
-  manifest.artifacts["openmvs_texture"] = (plan.workspaceDir / "openmvs" / "scene_texture.mvs").string();
+  manifest.artifacts["openmvs_mesh"] = (plan.workspaceDir / "openmvs" / "scene_mesh.ply").string();
+  manifest.artifacts["openmvs_texture"] = (plan.workspaceDir / "openmvs" / "scene_texture.ply").string();
 
   const auto manifestPath = plan.workspaceDir / "manifest.json";
   writeManifest(manifest, manifestPath);

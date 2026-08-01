@@ -4,8 +4,8 @@
 
 ## 目录结构
 
-- `data/images/`：输入图片。
-- `data/cameras.json`：相机参数，用于初始化 COLMAP 相机模型。
+- `data/images/`：输入图片，格式说明见 [`data/README.md`](data/README.md)。
+- `data/cameras.json`：相机参数，用于初始化 COLMAP 相机模型，字段说明见 [`data/README.md`](data/README.md)。
 - `3rd/colmap-4.1.1`：COLMAP 源码，固定在 `4.1.1` 标签。
 - `3rd/openMVS-2.4.0`：OpenMVS 源码，固定在 `v2.4.0` 标签。
 - `3rd/vcglib`：OpenMVS 需要的 VCG header-only 源码依赖。
@@ -16,7 +16,7 @@
 - `scripts`：拉取源码、构建和运行脚本。
 - `outputs/<run-name>`：每次重建的产物和日志。
 
-说明：Git 仓库中不提交 `data/`、`packages/`、`build/` 和 `outputs/`。其中 `data/` 用于本地输入图片和相机参数，`packages/` 是打包输出目录，`build/` 是本地编译目录，`outputs/` 是重建运行产物。
+说明：Git 仓库中不提交 `data/` 下的实际数据、`packages/`、`build/` 和 `outputs/`。其中 `data/` 用于本地输入图片和相机参数，仅保留 [`data/README.md`](data/README.md)；`packages/` 是打包输出目录，`build/` 是本地编译目录，`outputs/` 是重建运行产物。
 
 ## 核心组件职责
 
@@ -247,6 +247,14 @@ scripts/build.sh --package 0.1.0
 scripts/build.sh --package-only 0.1.0
 ```
 
+清理本地历史编译文件：
+
+```bash
+scripts/build.sh --clean
+```
+
+`--clean` 只删除根目录下的 `build/`，不会删除 `3rd/` 源码、`data/` 输入数据、`packages/` 打包产物或 `outputs/` 重建结果。
+
 包会输出到：
 
 ```text
@@ -259,10 +267,12 @@ packages/mvs-0.1.0
 - `bin/colmap`：COLMAP 4.1.1 命令行程序。
 - `bin/InterfaceCOLMAP`、`bin/DensifyPointCloud`、`bin/ReconstructMesh`、`bin/TextureMesh`：OpenMVS 2.4.0 所需工具。
 - `scripts/reconstruct.sh`：包内可直接运行的重建脚本。
+- `scripts/run_python_ui.py`：Python 编排入口脚本。
 - `src/python`：Python I/O 和 CLI 辅助代码。
-- `data/cameras.json` 和 `data/images`：默认输入数据。
 - `lib/onnxruntime`：本地 ONNX Runtime 动态库，如果构建时启用了本地 ONNX Runtime。
 - `manifest.json`：包版本、COLMAP/OpenMVS 固定版本和目录布局。
+
+打包产物不复制 `data/`。包内 `scripts/reconstruct.sh` 默认读取主项目目录下的 `data/images` 和 `data/cameras.json`，也可以通过 `DATA_ROOT=/path/to/data` 覆盖。
 
 主项目 C++ 可执行文件位置：
 
@@ -315,6 +325,8 @@ Python 编排入口：
 python3 scripts/run_python_ui.py --images data/images --cameras data/cameras.json --output outputs/default
 ```
 
+包内也会包含 `scripts/run_python_ui.py`。在包目录中运行时，它默认使用包内 `bin/` 下的可执行文件，并读取主项目目录下的 `data/`；也可以通过 `--data-root /path/to/data` 覆盖输入数据目录。
+
 ## 输出产物
 
 每次运行会写入：
@@ -324,8 +336,8 @@ python3 scripts/run_python_ui.py --images data/images --cameras data/cameras.jso
 - `outputs/<run-name>/colmap/dense/`
 - `outputs/<run-name>/openmvs/scene.mvs`
 - `outputs/<run-name>/openmvs/scene_dense.mvs`
-- `outputs/<run-name>/openmvs/scene_mesh.mvs`
-- `outputs/<run-name>/openmvs/scene_texture.mvs`
+- `outputs/<run-name>/openmvs/scene_mesh.ply`
+- `outputs/<run-name>/openmvs/scene_texture.ply` 及纹理图 `scene_texture*.png`
 - `outputs/<run-name>/logs/*.log`
 - `outputs/<run-name>/manifest.json`
 
