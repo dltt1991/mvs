@@ -73,9 +73,14 @@ Workspace output:
 - `outputs/<run-name>/colmap/dense/`
 - `outputs/<run-name>/openmvs/scene.mvs`
 - `outputs/<run-name>/openmvs/scene_dense.mvs`
-- `outputs/<run-name>/openmvs/scene_mesh.mvs`
-- `outputs/<run-name>/openmvs/scene_texture.mvs`
+- `outputs/<run-name>/openmvs/scene_mesh.ply`
+- `outputs/<run-name>/openmvs/scene_texture.ply` (plus `scene_texture*.png` texture atlases)
 - `outputs/<run-name>/manifest.json`
+
+OpenMVS runs in interface mode (`--archive-type` defaults to `-1`), where `.mvs` carries only
+cameras and poses while geometry lives in the sibling `.ply`. `ReconstructMesh` and `TextureMesh`
+therefore do not rewrite `.mvs`; downstream stages load geometry via `--pointcloud-file` /
+`--mesh-file`.
 
 ## Camera Handling
 

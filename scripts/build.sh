@@ -11,6 +11,7 @@ COLMAP_SRC_DIR="${ROOT_DIR}/3rd/colmap-${COLMAP_VERSION}"
 OPENMVS_SRC_DIR="${ROOT_DIR}/3rd/openMVS-${OPENMVS_VERSION}"
 PACKAGE_VERSION=""
 PACKAGE_ONLY=0
+CLEAN_ONLY=0
 OPENMVS_TOOLS=(
   InterfaceCOLMAP
   DensifyPointCloud
@@ -22,10 +23,12 @@ usage() {
   cat <<EOF
 Usage:
   scripts/build.sh
+  scripts/build.sh --clean
   scripts/build.sh --package <version>
   scripts/build.sh --package-only <version>
 
 Options:
+  --clean         Remove local build outputs and exit.
   --package       Build first, then create packages/mvs-<version>.
   --package-only  Create packages/mvs-<version> from existing build outputs.
 EOF
@@ -50,6 +53,10 @@ while [[ $# -gt 0 ]]; do
       PACKAGE_VERSION="$2"
       shift 2
       ;;
+    --clean)
+      CLEAN_ONLY=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -64,6 +71,11 @@ done
 
 if [[ -n "$PACKAGE_VERSION" && ! "$PACKAGE_VERSION" =~ ^[A-Za-z0-9._-]+$ ]]; then
   echo "Package version may only contain letters, numbers, dot, underscore, and dash." >&2
+  exit 1
+fi
+
+if [[ "$CLEAN_ONLY" -eq 1 && -n "$PACKAGE_VERSION" ]]; then
+  echo "--clean cannot be combined with packaging options." >&2
   exit 1
 fi
 
@@ -312,11 +324,11 @@ package_artifacts() {
   require_file "${BUILD_DIR}/mvs_reconstruct" "project binary"
   require_file "${THIRD_BUILD_DIR}/colmap/src/colmap/exe/colmap" "COLMAP binary"
   require_file "${ROOT_DIR}/scripts/reconstruct.sh" "reconstruct script"
-  require_file "${ROOT_DIR}/data/cameras.json" "camera config"
+  require_file "${ROOT_DIR}/scripts/run_python_ui.py" "Python UI script"
   require_file "${ROOT_DIR}/README.md" "README"
 
   command rm -r "$PACKAGE_DIR" 2>/dev/null || true
-  mkdir -p "${PACKAGE_DIR}/bin" "${PACKAGE_DIR}/scripts" "${PACKAGE_DIR}/src" "${PACKAGE_DIR}/data"
+  mkdir -p "${PACKAGE_DIR}/bin" "${PACKAGE_DIR}/scripts" "${PACKAGE_DIR}/src"
 
   cp "${BUILD_DIR}/mvs_reconstruct" "${PACKAGE_DIR}/bin/mvs_reconstruct"
   cp "${THIRD_BUILD_DIR}/colmap/src/colmap/exe/colmap" "${PACKAGE_DIR}/bin/colmap"
@@ -325,11 +337,8 @@ package_artifacts() {
   done
 
   cp "${ROOT_DIR}/scripts/reconstruct.sh" "${PACKAGE_DIR}/scripts/reconstruct.sh"
+  cp "${ROOT_DIR}/scripts/run_python_ui.py" "${PACKAGE_DIR}/scripts/run_python_ui.py"
   copy_dir_contents "${ROOT_DIR}/src/python" "${PACKAGE_DIR}/src/python"
-  cp "${ROOT_DIR}/data/cameras.json" "${PACKAGE_DIR}/data/cameras.json"
-  if [[ -d "${ROOT_DIR}/data/images" ]]; then
-    copy_dir_contents "${ROOT_DIR}/data/images" "${PACKAGE_DIR}/data/images"
-  fi
   cp "${ROOT_DIR}/README.md" "${PACKAGE_DIR}/README.md"
 
   if [[ -d "${THIRD_BUILD_DIR}/onnxruntime/lib" ]]; then
@@ -338,7 +347,7 @@ package_artifacts() {
   fi
 
   clean_package_metadata
-  chmod +x "${PACKAGE_DIR}/bin/"* "${PACKAGE_DIR}/scripts/reconstruct.sh"
+  chmod +x "${PACKAGE_DIR}/bin/"* "${PACKAGE_DIR}/scripts/reconstruct.sh" "${PACKAGE_DIR}/scripts/run_python_ui.py"
 
   cat > "${PACKAGE_DIR}/manifest.json" <<EOF
 {
@@ -349,13 +358,19 @@ package_artifacts() {
     "bin": "bin",
     "scripts": "scripts",
     "python": "src/python",
-    "data": "data"
+    "data": "../../data"
   }
 }
 EOF
 
   echo "Package created: ${PACKAGE_DIR}"
 }
+
+if [[ "$CLEAN_ONLY" -eq 1 ]]; then
+  command rm -r "$BUILD_DIR" 2>/dev/null || true
+  echo "Cleaned build outputs: ${BUILD_DIR}"
+  exit 0
+fi
 
 if [[ "$PACKAGE_ONLY" -eq 0 ]]; then
   cmake -S "$ROOT_DIR" -B "$BUILD_DIR"
