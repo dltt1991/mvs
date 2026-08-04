@@ -27,6 +27,9 @@ void writeManifest(const Manifest& manifest, const std::filesystem::path& path) 
         {"status", stage.status},
         {"duration_seconds", stage.durationSeconds},
         {"log_file", stage.logFile},
+        {"peak_resident_set_size_kb", stage.peakResidentSetSizeKb},
+        {"user_cpu_seconds", stage.userCpuSeconds},
+        {"system_cpu_seconds", stage.systemCpuSeconds},
     });
   }
   out << json.dump();

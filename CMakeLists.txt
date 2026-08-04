@@ -2,9 +2,15 @@ cmake_minimum_required(VERSION 3.24)
 
 project(MVSReconstruction LANGUAGES CXX)
 
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+find_package(Python3 COMPONENTS Interpreter)
 
 add_library(mvs_core
   src/cpp/pipeline/Config.cpp
@@ -67,3 +73,10 @@ set_target_properties(mvs_pipeline_command_test PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests/cpp
 )
 add_test(NAME mvs_pipeline_command_test COMMAND mvs_pipeline_command_test)
+
+if(Python3_Interpreter_FOUND)
+  add_test(
+    NAME mvs_report_run_test
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/report_run_test.py
+  )
+endif()

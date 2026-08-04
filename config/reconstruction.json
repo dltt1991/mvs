@@ -1,0 +1,103 @@
+{
+  // Input image directory.
+  // Candidates: "data/images" for the default local dataset, or an absolute path to another image folder.
+  // CLI override: --images
+  "images": "data/images",
+
+  // Camera metadata JSON for the image set.
+  // Candidates: "data/cameras.json" for the default dataset, or an absolute path generated for another dataset.
+  // CLI override: --cameras
+  "cameras": "data/cameras.json",
+
+  // Reconstruction output directory.
+  // Candidates: "outputs/default", "outputs/<run-name>", or an absolute path on a fast local disk.
+  // CLI override: --output
+  "output": "outputs/default",
+
+  // COLMAP command-line binary.
+  // Candidates: source-build path below, package path "bin/colmap", or any system COLMAP binary.
+  // CLI override: --colmap
+  "colmap": "build/third_party/colmap/src/colmap/exe/colmap",
+
+  // Directory containing OpenMVS tools: InterfaceCOLMAP, DensifyPointCloud, ReconstructMesh, TextureMesh.
+  // Candidates: source-build path below, package path "bin", or an external OpenMVS bin directory.
+  // CLI override: --openmvs-bin
+  "openmvs_bin": "build/third_party/openmvs/bin",
+
+  // Maximum worker threads passed to COLMAP/OpenMVS.
+  // Candidates: 0 = tool default/all available cores; 6 or 8 = leave CPU headroom for UI/IO on a 10-core machine.
+  // CLI override: --max-threads
+  "max_threads": 0,
+
+  // COLMAP image_undistorter copy policy for dense workspace images.
+  // Candidates: "HARD_LINK" = lowest IO on same filesystem; "SOFT_LINK" = symbolic links; "COPY" = portable full copy.
+  // CLI override: --undistort-copy-policy
+  "undistort_copy_policy": "HARD_LINK",
+
+  // Reuse completed stages in the same output directory when marker, input snapshot, command signature, and artifacts match.
+  // Candidates: false = always recompute; true = skip matching stages for iteration/failure recovery.
+  // CLI override: --reuse-existing
+  "reuse_existing": false,
+
+  // Remove OpenMVS .dmap intermediate depth maps after dense fusion.
+  // Candidates: true = save several GB per run; false = keep depth maps for debugging/analysis.
+  // CLI override: --remove-depth-maps
+  "remove_depth_maps": true,
+
+  // COLMAP matching strategy.
+  // Candidates: "exhaustive" = safest for unordered photos; "sequential" = faster when photos follow a clear capture order.
+  // CLI override: --matcher
+  "matcher": "exhaustive",
+
+  // Number of neighboring images matched on each side by COLMAP sequential_matcher.
+  // Candidates: 5 = faster but riskier; 10 = COLMAP default; 12-20 = safer for wider-baseline ordered captures.
+  // Used only when matcher is "sequential".
+  // CLI override: --sequential-overlap
+  "sequential_overlap": 10,
+
+  // Use COLMAP sequential_matcher quadratic overlap sampling for far neighbors.
+  // Candidates: true = COLMAP default/fewer ordered pairs; false = match all neighbors up to sequential_overlap, safer for large pose jumps but closer to exhaustive cost.
+  // Used only when matcher is "sequential".
+  // CLI override: --sequential-quadratic-overlap
+  "sequential_quadratic_overlap": true,
+
+  // Number of neighbor views used by OpenMVS for depth-map estimation.
+  // Candidates: 5 = OpenMVS default; 4 = moderate speed experiment; 3 = aggressive speed experiment.
+  // CLI override: --densify-number-views
+  "densify_number_views": 5,
+
+  // Minimum number of agreeing views during OpenMVS depth-map fusion.
+  // Candidates: 2 = OpenMVS default/current quality baseline; 3 = stricter fusion, fewer points; 1 = looser/merge-like, higher quality risk.
+  // CLI override: --densify-number-views-fuse
+  "densify_number_views_fuse": 2,
+
+  // Number of geometric-consistency PatchMatch iterations in OpenMVS.
+  // Candidates: 1 = measured best default for this ordered 41-image dataset; 2 = OpenMVS baseline quality; 0 = fastest but highest quality risk.
+  // CLI override: --densify-geometric-iters
+  "densify_geometric_iters": 1,
+
+  // Image scale level for OpenMVS depth-map estimation.
+  // Candidates: 1 = OpenMVS default/current quality baseline; 2 = faster lower-resolution experiment; 0 = full resolution, slower/higher memory.
+  // CLI override: --densify-resolution-level
+  "densify_resolution_level": 1,
+
+  // Maximum image side resolution used by OpenMVS depth-map estimation.
+  // Candidates: 2560 = OpenMVS default/current baseline; 2048 = moderate speed experiment; 1920 = more aggressive speed experiment.
+  // CLI override: --densify-max-resolution
+  "densify_max_resolution": 2560,
+
+  // Number of PatchMatch iterations in OpenMVS depth-map estimation.
+  // Candidates: 3 = current end-to-end default; 2 = Densify faster but measured TextureMesh slower here; 1 = aggressive speed experiment.
+  // CLI override: --densify-iters
+  "densify_iters": 3,
+
+  // Generate the final textured mesh after mesh reconstruction.
+  // Candidates: true = full final result; false = stop after scene_mesh.ply for faster geometry preview/UI iteration.
+  // CLI override: --generate-texture
+  "generate_texture": true,
+
+  // Texture atlas patch packing heuristic used by OpenMVS TextureMesh.
+  // Candidates: 100 = measured fastest with unchanged geometry/texture file count here; 3 = OpenMVS default/good speed; 0 = best-fit packing, usually slower.
+  // CLI override: --texture-patch-packing-heuristic
+  "texture_patch_packing_heuristic": 100
+}

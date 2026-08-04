@@ -10,6 +10,9 @@ struct CommandResult {
   int exitCode = 0;
   std::string stdoutText;
   std::string stderrText;
+  long peakResidentSetSizeKb = 0;
+  double userCpuSeconds = 0.0;
+  double systemCpuSeconds = 0.0;
 };
 
 CommandResult runCommand(const std::vector<std::string>& args,

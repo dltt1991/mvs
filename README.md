@@ -296,6 +296,16 @@ build/mvs_reconstruct
 scripts/reconstruct.sh
 ```
 
+默认配置文件位于：
+
+```text
+config/reconstruction.json
+```
+
+直接运行 `build/mvs_reconstruct` 且不传参数时，会读取这个配置文件。配置文件支持 JSONC 风格的 `//` 注释；每个配置项都写有含义、候选值和命令行覆盖项。`scripts/reconstruct.sh` 也会把它作为基础配置，再用脚本计算出的数据目录、输出目录和二进制路径覆盖；`MVS_CONFIG=/path/to/config.json scripts/reconstruct.sh` 可以换用其它配置文件。配置文件适合放常用效率参数，例如 `max_threads`、`undistort_copy_policy`、`reuse_existing`、`remove_depth_maps`、`matcher` 和 `densify_geometric_iters`。
+
+效率优化过程、基线和阶段成果记录在 [`EFFICIENCY_OPTIMIZATION.md`](EFFICIENCY_OPTIMIZATION.md)。
+
 运行时终端会按阶段输出进度、日志路径和耗时，例如：
 
 ```text
@@ -310,20 +320,69 @@ scripts/reconstruct.sh
 == 多视角三维重建完成，总耗时 123.45s ==
 ```
 
-每个阶段的耗时也会写入 `outputs/<run-name>/manifest.json` 的 `stages` 数组。某一步失败时，终端会显示失败阶段、耗时、退出码和对应日志文件路径。
+每个阶段的耗时、子进程 CPU 时间和峰值内存也会写入 `outputs/<run-name>/manifest.json` 的 `stages` 数组。某一步失败时，终端会显示失败阶段、耗时、退出码和对应日志文件路径。
+
+pipeline 会在 `outputs/<run-name>/colmap/image_list.txt` 写入按文件名排序的图片列表，并传给 COLMAP `feature_extractor` 和 `mapper`。这不会修改 `data/`，但可以避免目录遍历顺序导致的 image ID、mapper 初始化和性能结果波动。
 
 可选覆盖项：
 
 ```bash
 RUN_NAME=my-run scripts/reconstruct.sh
+MVS_CONFIG=/path/to/reconstruction.json scripts/reconstruct.sh
 COLMAP_BIN=/path/to/colmap OPENMVS_BIN_DIR=/path/to/openmvs/bin scripts/reconstruct.sh
+MVS_MAX_THREADS=8 scripts/reconstruct.sh
+UNDISTORT_COPY_POLICY=COPY scripts/reconstruct.sh
+MVS_REUSE_EXISTING=1 scripts/reconstruct.sh
+MVS_REMOVE_DEPTH_MAPS=0 scripts/reconstruct.sh
+MVS_MATCHER=exhaustive MVS_DENSIFY_GEOMETRIC_ITERS=1 scripts/reconstruct.sh
+MVS_MATCHER=sequential MVS_SEQUENTIAL_OVERLAP=40 MVS_SEQUENTIAL_QUADRATIC_OVERLAP=0 scripts/reconstruct.sh
+MVS_DENSIFY_MAX_RESOLUTION=2048 scripts/reconstruct.sh
+MVS_DENSIFY_RESOLUTION_LEVEL=2 scripts/reconstruct.sh
+MVS_DENSIFY_ITERS=2 scripts/reconstruct.sh
+MVS_DENSIFY_NUMBER_VIEWS_FUSE=3 scripts/reconstruct.sh
+MVS_GENERATE_TEXTURE=0 scripts/reconstruct.sh
+MVS_TEXTURE_PATCH_PACKING_HEURISTIC=100 scripts/reconstruct.sh
 ```
+
+`image_undistorter` 默认使用 `HARD_LINK` 生成 dense workspace，减少不必要的图片复制和磁盘 IO；如果输出目录和输入图片不在同一文件系统，或需要完全独立的输出目录，可以把 `UNDISTORT_COPY_POLICY` 设置为 `COPY`。`MVS_MAX_THREADS` 会传给 COLMAP/OpenMVS 的线程参数；不设置时沿用各工具默认线程策略。
+
+`MVS_REUSE_EXISTING=1` 会复用同一输出目录里已经成功生成的阶段产物。复用需要同时满足阶段 marker、命令签名、输入图片/相机文件快照和目标产物都匹配；默认关闭，避免意外使用旧结果。
+
+`DensifyPointCloud` 默认使用 `--remove-dmaps 1` 删除融合后的 `.dmap` 中间文件，减少输出目录体积；如果需要保留深度图用于调试或后续分析，可以设置 `MVS_REMOVE_DEPTH_MAPS=0`。
+
+当前默认 matcher 仍使用 `exhaustive`。虽然这组图片有明显拍摄顺序，实测 `sequential_matcher` 默认 quadratic overlap 采样在 overlap 12 和 40 下都会明显减少可用位姿/稀疏点，最终质量风险较高。若图片有顺序但前后位姿变化较大，可以试 `MVS_MATCHER=sequential MVS_SEQUENTIAL_OVERLAP=40 MVS_SEQUENTIAL_QUADRATIC_OVERLAP=0`，它会关闭远邻稀疏采样，匹配更多顺序邻域 pair，但耗时接近 exhaustive。当前推荐的 Densify 默认值是 `MVS_DENSIFY_GEOMETRIC_ITERS=1`，在本数据集上把总耗时从约 21m34s 降到约 16m37s，dense point 数量下降约 3.1%。
+
+Texture 阶段默认使用 `MVS_TEXTURE_PATCH_PACKING_HEURISTIC=100`。在同一 `geom1` mesh 上单独 A/B，OpenMVS 默认值 3 的 TextureMesh wall time 为 `239.90s`，候选值 100 为 `187.11s`，输出顶点/面数和纹理文件数量一致。当前默认配置端到端复测为约 `19m00s`；由于 Densify 和 mesh 规模会随运行环境/重建结果波动，单阶段收益不一定等比例反映到总耗时。
+
+Densify 还支持 `MVS_DENSIFY_MAX_RESOLUTION`、`MVS_DENSIFY_RESOLUTION_LEVEL`、`MVS_DENSIFY_ITERS` 和 `MVS_DENSIFY_NUMBER_VIEWS_FUSE` 做质量受控 A/B。当前默认 `MVS_DENSIFY_MAX_RESOLUTION=2560` 保持 OpenMVS 基线质量；`2048` 实测很快但 dense/mesh 指标下降约三成，不作为默认。`MVS_DENSIFY_ITERS=2` 实测 Densify 快约 18%，但 TextureMesh 因 patch 数增大导致端到端变慢，因此默认仍保持 3。
+
+`MVS_GENERATE_TEXTURE=0` 会在 `scene_mesh.ply` 生成后停止，不运行 TextureMesh。默认仍为 `1`，用于完整 textured mesh；关闭后适合 UI 先展示可用几何、调试 mesh 或把贴图作为后台任务单独排队。
 
 Python 编排入口：
 
 ```bash
 python3 scripts/run_python_ui.py --images data/images --cameras data/cameras.json --output outputs/default
+python3 scripts/run_python_ui.py --config config/reconstruction.json
+python3 scripts/run_python_ui.py --max-threads 8 --undistort-copy-policy COPY
+python3 scripts/run_python_ui.py --reuse-existing 1
+python3 scripts/run_python_ui.py --remove-depth-maps 0
+python3 scripts/run_python_ui.py --matcher sequential --sequential-overlap 40 --sequential-quadratic-overlap 0
+python3 scripts/run_python_ui.py --densify-max-resolution 2048
+python3 scripts/run_python_ui.py --densify-resolution-level 2 --densify-iters 2
+python3 scripts/run_python_ui.py --generate-texture 0
+python3 scripts/run_python_ui.py --texture-patch-packing-heuristic 100
 ```
+
+运行报告：
+
+```bash
+python3 scripts/report_run.py outputs/default
+python3 scripts/report_run.py outputs/default --json
+python3 scripts/report_run.py outputs/default --output outputs/default/report.md
+python3 scripts/report_run.py outputs/baseline --compare outputs/candidate
+```
+
+报告会汇总 `manifest.json`、stage 日志、OpenMVS 点云/mesh 指标和关键产物体积，方便做参数 A/B 对比。
 
 包内也会包含 `scripts/run_python_ui.py`。在包目录中运行时，它默认使用包内 `bin/` 下的可执行文件，并读取主项目目录下的 `data/`；也可以通过 `--data-root /path/to/data` 覆盖输入数据目录。
 
@@ -340,6 +399,8 @@ python3 scripts/run_python_ui.py --images data/images --cameras data/cameras.jso
 - `outputs/<run-name>/openmvs/scene_texture.ply` 及纹理图 `scene_texture*.png`
 - `outputs/<run-name>/logs/*.log`
 - `outputs/<run-name>/manifest.json`
+
+如果设置 `MVS_GENERATE_TEXTURE=0`，输出会停在 `scene_mesh.ply`，不会生成 `scene_texture.ply` 和纹理图。
 
 ## 快速验证
 

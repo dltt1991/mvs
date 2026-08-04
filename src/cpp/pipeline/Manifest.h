@@ -13,6 +13,9 @@ struct StageManifestEntry {
   std::string status;
   double durationSeconds = 0.0;
   std::string logFile;
+  long peakResidentSetSizeKb = 0;
+  double userCpuSeconds = 0.0;
+  double systemCpuSeconds = 0.0;
 };
 
 struct Manifest {

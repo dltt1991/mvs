@@ -325,10 +325,12 @@ package_artifacts() {
   require_file "${THIRD_BUILD_DIR}/colmap/src/colmap/exe/colmap" "COLMAP binary"
   require_file "${ROOT_DIR}/scripts/reconstruct.sh" "reconstruct script"
   require_file "${ROOT_DIR}/scripts/run_python_ui.py" "Python UI script"
+  require_file "${ROOT_DIR}/scripts/report_run.py" "run report script"
+  require_file "${ROOT_DIR}/config/reconstruction.json" "reconstruction config"
   require_file "${ROOT_DIR}/README.md" "README"
 
   command rm -r "$PACKAGE_DIR" 2>/dev/null || true
-  mkdir -p "${PACKAGE_DIR}/bin" "${PACKAGE_DIR}/scripts" "${PACKAGE_DIR}/src"
+  mkdir -p "${PACKAGE_DIR}/bin" "${PACKAGE_DIR}/config" "${PACKAGE_DIR}/scripts" "${PACKAGE_DIR}/src"
 
   cp "${BUILD_DIR}/mvs_reconstruct" "${PACKAGE_DIR}/bin/mvs_reconstruct"
   cp "${THIRD_BUILD_DIR}/colmap/src/colmap/exe/colmap" "${PACKAGE_DIR}/bin/colmap"
@@ -338,6 +340,8 @@ package_artifacts() {
 
   cp "${ROOT_DIR}/scripts/reconstruct.sh" "${PACKAGE_DIR}/scripts/reconstruct.sh"
   cp "${ROOT_DIR}/scripts/run_python_ui.py" "${PACKAGE_DIR}/scripts/run_python_ui.py"
+  cp "${ROOT_DIR}/scripts/report_run.py" "${PACKAGE_DIR}/scripts/report_run.py"
+  cp "${ROOT_DIR}/config/reconstruction.json" "${PACKAGE_DIR}/config/reconstruction.json"
   copy_dir_contents "${ROOT_DIR}/src/python" "${PACKAGE_DIR}/src/python"
   cp "${ROOT_DIR}/README.md" "${PACKAGE_DIR}/README.md"
 
@@ -347,7 +351,7 @@ package_artifacts() {
   fi
 
   clean_package_metadata
-  chmod +x "${PACKAGE_DIR}/bin/"* "${PACKAGE_DIR}/scripts/reconstruct.sh" "${PACKAGE_DIR}/scripts/run_python_ui.py"
+  chmod +x "${PACKAGE_DIR}/bin/"* "${PACKAGE_DIR}/scripts/reconstruct.sh" "${PACKAGE_DIR}/scripts/run_python_ui.py" "${PACKAGE_DIR}/scripts/report_run.py"
 
   cat > "${PACKAGE_DIR}/manifest.json" <<EOF
 {
@@ -373,7 +377,7 @@ if [[ "$CLEAN_ONLY" -eq 1 ]]; then
 fi
 
 if [[ "$PACKAGE_ONLY" -eq 0 ]]; then
-  cmake -S "$ROOT_DIR" -B "$BUILD_DIR"
+  cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
   cmake --build "$BUILD_DIR" --parallel "$JOBS"
 
   if [[ -d "$COLMAP_SRC_DIR" ]]; then
