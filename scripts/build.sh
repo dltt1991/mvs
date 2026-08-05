@@ -4,11 +4,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 THIRD_BUILD_DIR="${BUILD_DIR}/third_party"
-JOBS="${JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+JOBS="${JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)}"
 COLMAP_VERSION="4.1.1"
 OPENMVS_VERSION="2.4.0"
 COLMAP_SRC_DIR="${ROOT_DIR}/3rd/colmap-${COLMAP_VERSION}"
 OPENMVS_SRC_DIR="${ROOT_DIR}/3rd/openMVS-${OPENMVS_VERSION}"
+# COLMAP 用 FetchContent 拉取的两个依赖。预置在 3rd/ 下时走本地源码，
+# 目录不存在则回退到网络拉取（见 3rd/colmap-*/src/thirdparty/CMakeLists.txt）。
+POSELIB_SRC_DIR="${ROOT_DIR}/3rd/PoseLib"
+FAISS_SRC_DIR="${ROOT_DIR}/3rd/faiss"
 PACKAGE_VERSION=""
 PACKAGE_ONLY=0
 CLEAN_ONLY=0
@@ -164,12 +168,30 @@ openmvs_linker_flags() {
 }
 
 find_local_onnxruntime() {
+  # 只接受与当前平台匹配的本地包。macOS 的 onnxruntime 自带合法 CMake config，
+  # 如果在 Linux 上被选中，COLMAP 会拿到 .dylib 并在链接阶段失败。
+  local candidates=("${ROOT_DIR}/3rd/onnxruntime")
+  case "$(uname -s)" in
+    Darwin)
+      candidates+=("${ROOT_DIR}/3rd/onnxruntime-osx-arm64-1.24.4")
+      ;;
+    Linux)
+      case "$(uname -m)" in
+        aarch64|arm64)
+          candidates+=("${ROOT_DIR}/3rd/onnxruntime-linux-aarch64-1.24.4")
+          ;;
+        *)
+          candidates+=(
+            "${ROOT_DIR}/3rd/onnxruntime-linux-x64-gpu-1.24.4"
+            "${ROOT_DIR}/3rd/onnxruntime-linux-x64-1.24.4"
+          )
+          ;;
+      esac
+      ;;
+  esac
+
   local candidate
-  for candidate in \
-    "${ROOT_DIR}/3rd/onnxruntime" \
-    "${ROOT_DIR}/3rd/onnxruntime-osx-arm64-1.24.4" \
-    "${ROOT_DIR}/3rd/onnxruntime-linux-x64-1.24.4" \
-    "${ROOT_DIR}/3rd/onnxruntime-linux-aarch64-1.24.4"; do
+  for candidate in "${candidates[@]}"; do
     if [[ -d "${candidate}/include" && -d "${candidate}/lib" ]]; then
       printf '%s' "$candidate"
       return
@@ -179,6 +201,15 @@ find_local_onnxruntime() {
 
 set_colmap_onnx_args() {
   COLMAP_ONNX_ARGS=()
+
+  # ONNX 默认关闭（macOS 与 Linux 一致）。COLMAP 只在深度学习特征匹配等可选路径
+  # 上用到它，本项目的重建流程不需要；关掉可以省去 onnxruntime 的下载、体积和
+  # 平台相关的动态库/签名处理。需要时用 MVS_ENABLE_ONNX=1 显式开启。
+  if [[ "${MVS_ENABLE_ONNX:-0}" != "1" ]]; then
+    COLMAP_ONNX_ARGS=("-DONNX_ENABLED=OFF" "-DFETCH_ONNX=OFF")
+    return
+  fi
+
   local onnx_dir
   onnx_dir="$(find_local_onnxruntime)"
   if [[ -n "$onnx_dir" ]]; then
@@ -204,6 +235,19 @@ set_colmap_onnx_args() {
     )
   else
     COLMAP_ONNX_ARGS=("-DONNX_ENABLED=OFF")
+  fi
+}
+
+set_colmap_fetch_args() {
+  # poselib / faiss 预置在 3rd/ 下时走本地源码，构建期不联网；
+  # 目录不存在则留空，由 COLMAP 的 CMake 回退到 git+ssh 拉取。
+  # 用 -U 清掉 CMake 缓存里的旧值，避免上次构建残留的路径在目录删除后继续生效。
+  COLMAP_FETCH_ARGS=(-UPOSELIB_LOCAL_SOURCE_DIR -UFAISS_LOCAL_SOURCE_DIR)
+  if [[ -f "${POSELIB_SRC_DIR}/CMakeLists.txt" ]]; then
+    COLMAP_FETCH_ARGS+=("-DPOSELIB_LOCAL_SOURCE_DIR=${POSELIB_SRC_DIR}")
+  fi
+  if [[ -f "${FAISS_SRC_DIR}/CMakeLists.txt" ]]; then
+    COLMAP_FETCH_ARGS+=("-DFAISS_LOCAL_SOURCE_DIR=${FAISS_SRC_DIR}")
   fi
 }
 
@@ -345,7 +389,9 @@ package_artifacts() {
   copy_dir_contents "${ROOT_DIR}/src/python" "${PACKAGE_DIR}/src/python"
   cp "${ROOT_DIR}/README.md" "${PACKAGE_DIR}/README.md"
 
-  if [[ -d "${THIRD_BUILD_DIR}/onnxruntime/lib" ]]; then
+  # ONNX 默认关闭，产物里不带 onnxruntime 动态库。显式开启时才打包，
+  # 避免历史构建残留在 build/third_party/onnxruntime 下的库被误打包。
+  if [[ "${MVS_ENABLE_ONNX:-0}" == "1" && -d "${THIRD_BUILD_DIR}/onnxruntime/lib" ]]; then
     copy_dir_contents "${THIRD_BUILD_DIR}/onnxruntime/lib" "${PACKAGE_DIR}/lib/onnxruntime"
     fix_packaged_colmap_onnx_runtime_path
   fi
@@ -371,7 +417,11 @@ EOF
 }
 
 if [[ "$CLEAN_ONLY" -eq 1 ]]; then
-  command rm -r "$BUILD_DIR" 2>/dev/null || true
+  # BUILD_DIR 可能是挂载点（容器里 build/ 绑到宿主机 ext4，因为项目所在的
+  # yrfs 不支持 execve）。对挂载点 rm -r 会失败，所以清内容而不是删目录本身。
+  if [[ -d "$BUILD_DIR" ]]; then
+    find "$BUILD_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  fi
   echo "Cleaned build outputs: ${BUILD_DIR}"
   exit 0
 fi
@@ -383,6 +433,7 @@ if [[ "$PACKAGE_ONLY" -eq 0 ]]; then
   if [[ -d "$COLMAP_SRC_DIR" ]]; then
     prepare_colmap_macos_deps
     set_colmap_onnx_args
+    set_colmap_fetch_args
     reset_build_dir_if_source_changed "$COLMAP_SRC_DIR" "${THIRD_BUILD_DIR}/colmap"
     cmake -S "$COLMAP_SRC_DIR" -B "${THIRD_BUILD_DIR}/colmap" \
       -Uonnxruntime_DIR \
@@ -391,6 +442,7 @@ if [[ "$PACKAGE_ONLY" -eq 0 ]]; then
       -Uonnxruntime_LIBRARY_DIR_HINTS \
       -DCMAKE_BUILD_TYPE=Release \
       "${COLMAP_ONNX_ARGS[@]}" \
+      "${COLMAP_FETCH_ARGS[@]}" \
       -DCMAKE_PREFIX_PATH="$(brew_prefixes boost eigen nanoflann opencv@4 opencv openimageio jpeg-xl curl libomp metis glog googletest ceres-solver suitesparse qt glew cgal sqlite3)" \
       -DCMAKE_INSTALL_PREFIX="${THIRD_BUILD_DIR}/colmap/install"
     cmake --build "${THIRD_BUILD_DIR}/colmap" --parallel "$JOBS" --target colmap_main

@@ -38,8 +38,17 @@
 #include <CGAL/Triangulation_cell_base_with_info_3.h>
 #include <CGAL/Spatial_sort_traits_adapter_3.h>
 #include <CGAL/AABB_tree.h>
+// CGAL 6.0 把这两个头重命名为带 _3 后缀的版本（旧名在 6.0 仍可用但已弃用）。
+// Ubuntu 24.04 自带 CGAL 5.6，只有旧名。本文件实际未使用 CGAL::AABB_* 类型
+// （415 行的 AABB3 是 OpenMVS 自己的 TAABB，见 libs/Common/Types.h:368），
+// 这里保留 include 只为不改变上游的头文件依赖意图。
+#if CGAL_VERSION_NR >= 1060000000
 #include <CGAL/AABB_traits_3.h>
 #include <CGAL/AABB_triangle_primitive_3.h>
+#else
+#include <CGAL/AABB_traits.h>
+#include <CGAL/AABB_triangle_primitive.h>
+#endif
 #include <CGAL/Polyhedron_3.h>
 
 using namespace MVS;

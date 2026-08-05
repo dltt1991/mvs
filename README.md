@@ -10,13 +10,16 @@
 - `3rd/openMVS-2.4.0`：OpenMVS 源码，固定在 `v2.4.0` 标签。
 - `3rd/vcglib`：OpenMVS 需要的 VCG header-only 源码依赖。
 - `3rd/nlohmann`：C++ 核心使用的 nlohmann/json 头文件。
-- `3rd/onnxruntime-osx-arm64-1.24.4`：macOS arm64 下可选的本地 ONNX Runtime 包，用于避免 COLMAP 构建时联网下载。
+- `3rd/PoseLib`、`3rd/faiss`：COLMAP 通过 FetchContent 依赖的两个库，预置在此避免构建时联网。
 - `src/cpp`：C++ 编译核心，包括重建流程、命令规划、日志和 manifest 输出。
 - `src/python`：Python I/O 和 CLI 辅助代码。
 - `scripts`：拉取源码、构建和运行脚本。
+- `docker`：Docker 构建配置和文档，支持 CUDA 加速的 Ubuntu 容器环境，详见 [`docker/README.md`](docker/README.md)。
 - `outputs/<run-name>`：每次重建的产物和日志。
 
 说明：Git 仓库中不提交 `data/` 下的实际数据、`packages/`、`build/` 和 `outputs/`。其中 `data/` 用于本地输入图片和相机参数，仅保留 [`data/README.md`](data/README.md)；`packages/` 是打包输出目录，`build/` 是本地编译目录，`outputs/` 是重建运行产物。
+
+用 Docker 时，`build/`、`outputs/`、`packages/` 这三个目录是挂载点，实际内容在宿主机的 `MVS_WORK_DIR`（默认 `/data/mvs-build`）下，不在项目目录里。文档中出现的这些相对路径在容器内依然有效。详见下面的[产物目录 `MVS_WORK_DIR`](#产物目录-mvs_work_dir)。
 
 ## 核心组件职责
 
@@ -112,9 +115,87 @@ OpenMVS 还需要 VCG header-only 源码依赖，脚本会拉取到：
 3rd/vcglib
 ```
 
+COLMAP 自身还会通过 CMake `FetchContent` 拉取 PoseLib 和 faiss。脚本一并预置到：
+
+```text
+3rd/PoseLib    固定 commit fa7280fe
+3rd/faiss      固定 tag v1.14.1
+```
+
+`scripts/build.sh` 检测到这两个目录就把它们作为源码传给 COLMAP，构建期不再联网；目录不存在时回退到网络拉取（默认走 git+ssh，见[依赖拉取方式](#依赖拉取方式)）。两个目录齐备时整个构建可以完全离线。
+
+版本必须与 `3rd/colmap-4.1.1/src/thirdparty/CMakeLists.txt` 里声明的一致，升级 COLMAP 时要同步更新 `scripts/fetch_3rdparty.sh` 里的 `POSELIB_COMMIT` 和 `FAISS_TAG`。
+
 当前 `3rd/` 中的第三方源码按固定版本 vendored 到项目里，并已清理 `.git` 元数据、文档、CI、Docker、示例和测试数据。`scripts/fetch_3rdparty.sh` 遇到已存在但没有 `.git` 的源码目录时会直接复用；需要重新下载时，先删除对应目录再执行脚本。
 
+### 依赖拉取方式
+
+PoseLib 和 faiss 的获取方式按优先级依次是：
+
+1. **本地预置源码**（默认，最快且离线）。`3rd/PoseLib` 和 `3rd/faiss` 存在时直接使用。
+2. **git+ssh 克隆**。国内网络直连 `codeload.github.com` 下载 `.zip` 归档常常超时，SSH 稳定得多，因此这是网络拉取时的默认方式，需要可用的 GitHub SSH 密钥。
+3. **HTTPS 归档**，上游原始方式。用 `-DFETCH_DEPS_OVER_SSH=OFF` 切回。
+
 ## 构建依赖
+
+### Docker（推荐）
+
+提供开箱即用的 Ubuntu 24.04 + CUDA 12.6 容器环境，包含所有编译和运行依赖。详见 [`docker/README.md`](docker/README.md)。
+
+快速开始：
+
+```bash
+# 构建镜像（需要 NVIDIA Container Toolkit）
+docker-compose build
+
+# 一次性执行构建
+docker-compose run --rm mvs bash scripts/build.sh
+
+# 或进入容器交互操作
+docker-compose run --rm mvs
+```
+
+注意容器内用 `bash scripts/build.sh` 而不是 `./scripts/build.sh`，原因见下面的
+「产物目录 `MVS_WORK_DIR`」。
+
+#### 产物目录 `MVS_WORK_DIR`
+
+`build/`、`outputs/`、`packages/` 三个目录不落在项目目录里，而是统一挂载到
+`MVS_WORK_DIR`（默认 `/data/mvs-build`）下的同名子目录：
+
+```bash
+# 换到别的位置，三个目录会一起跟过去
+MVS_WORK_DIR=/your/local/path docker-compose run --rm mvs bash scripts/build.sh
+```
+
+**`MVS_WORK_DIR` 必须指向本地磁盘（ext4/xfs 等），不能是网络文件系统。**
+两个原因：
+
+- 可执行性。部分网络文件系统（NFS、yrfs 等）不支持 `execve()`，编译出的
+  `colmap`、`mvs_reconstruct` 和 OpenMVS 工具放在上面无法运行，报
+  `bad interpreter: Invalid argument` 或 `Invalid argument`。`build/` 和
+  `packages/` 里都是可执行文件。同样的原因，如果项目源码本身也在这类文件系统上，
+  shell 脚本不能直接 `./scripts/build.sh` 执行，要写成 `bash scripts/build.sh`。
+- 性能。重建过程中的深度图和稠密点云体积大、随机写多，本地盘远快于网络盘。
+
+如果你的项目目录本来就在本地盘上，也可以把 `docker-compose.yml` 里这三行挂载
+注释掉，让产物回到项目目录内。
+
+#### 数据目录 `DATA_ROOT`
+
+输入图片和相机参数默认从项目根的 `data/` 读取，容器里是 `/workspace/data`。
+用别处的数据集时通过 `DATA_ROOT` 指定：
+
+```bash
+DATA_ROOT=/workspace/data/my-dataset docker-compose run --rm mvs bash scripts/reconstruct.sh
+```
+
+`DATA_ROOT` 是容器内的路径。指向项目外的数据时，记得先在
+`docker-compose.yml` 里加一条对应的挂载，否则容器里看不到。
+
+打包产物（`scripts/build.sh --package <version>`）里的 `scripts/reconstruct.sh`
+默认把 `DATA_ROOT` 解析为包目录的上两级 `../../data` —— 这是为了让包不必自带数据。
+把包拷到别的位置部署时，这个相对路径通常不再成立，需要显式传 `DATA_ROOT`。
 
 ### macOS
 
@@ -269,10 +350,18 @@ packages/mvs-0.1.0
 - `scripts/reconstruct.sh`：包内可直接运行的重建脚本。
 - `scripts/run_python_ui.py`：Python 编排入口脚本。
 - `src/python`：Python I/O 和 CLI 辅助代码。
-- `lib/onnxruntime`：本地 ONNX Runtime 动态库，如果构建时启用了本地 ONNX Runtime。
+- `lib/onnxruntime`：本地 ONNX Runtime 动态库，仅在 `MVS_ENABLE_ONNX=1` 构建时存在，默认没有这个目录。
 - `manifest.json`：包版本、COLMAP/OpenMVS 固定版本和目录布局。
 
-打包产物不复制 `data/`。包内 `scripts/reconstruct.sh` 默认读取主项目目录下的 `data/images` 和 `data/cameras.json`，也可以通过 `DATA_ROOT=/path/to/data` 覆盖。
+打包产物不复制 `data/`。包内 `scripts/reconstruct.sh` 把数据目录解析为包目录的上两级 `../../data`，也就是包放在项目 `packages/` 下时能命中主项目的 `data/`。
+
+把包拷到其它位置部署时，这个相对路径通常不再成立，需要显式指定：
+
+```bash
+DATA_ROOT=/path/to/data /opt/mvs-0.1.0/scripts/reconstruct.sh
+```
+
+包里的 `bin/` 是可执行文件，解压位置必须支持执行（不能是部分网络文件系统），否则会报 `Invalid argument`。
 
 主项目 C++ 可执行文件位置：
 
@@ -282,13 +371,25 @@ build/mvs_reconstruct
 
 脚本会在 `3rd/` 下存在源码时尝试构建 COLMAP 和 OpenMVS。
 
-如果本地已经下载 ONNX Runtime，macOS arm64 包可放在：
+### ONNX Runtime（默认关闭）
+
+COLMAP 的 ONNX Runtime 用于深度学习特征提取（如 SuperPoint），本项目流程（SIFT + SfM + MVS）不依赖，因此 macOS 和 Linux 都默认关闭，构建时不下载 onnxruntime，打包产物里也不含 `lib/onnxruntime`。
+
+仓库不再随附 onnxruntime 预编译包（macOS arm64 那份含两个 35MB dylib 和调试符号，共 120MB，默认关闭后属于无用体积）。需要启用时自行从 [onnxruntime releases](https://github.com/microsoft/onnxruntime/releases/tag/v1.24.4) 下载对应平台的包，解压到 `3rd/`（目录中需包含 `include/` 和 `lib/`）：
 
 ```text
-3rd/onnxruntime-osx-arm64-1.24.4
+3rd/onnxruntime-osx-arm64-1.24.4        # macOS arm64
+3rd/onnxruntime-linux-x64-gpu-1.24.4    # Linux x64，CUDA 12
+3rd/onnxruntime-linux-x64-1.24.4        # Linux x64，CPU
 ```
 
-目录中需要包含 `include/` 和 `lib/`。`scripts/build.sh` 会自动检测该目录，生成 COLMAP 需要的 include 兼容层，并关闭 COLMAP 的 ONNX Runtime 在线下载。
+然后用 `MVS_ENABLE_ONNX=1` 构建。只放置文件不会自动启用：
+
+```bash
+MVS_ENABLE_ONNX=1 bash scripts/build.sh
+```
+
+启用后 `scripts/build.sh` 会检测到本地包，生成 COLMAP 需要的 include 兼容层，并关闭 COLMAP 的 ONNX Runtime 在线下载。找不到匹配当前平台的本地包时，仍会回退到关闭状态。
 
 ## 运行重建
 

@@ -1,0 +1,43 @@
+services:
+  mvs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # 宿主机为 Quadro RTX 6000 (compute capability 7.5)。
+        # 换机器时改这里，或用 docker compose build --build-arg CUDA_ARCHITECTURES=86
+        CUDA_ARCHITECTURES: "75"
+        USER_ID: "1000"
+        GROUP_ID: "1005"
+    image: mvs-build:cuda12.6-ubuntu24.04
+    # 源码和数据留在宿主机项目目录，容器只提供工具链。
+    #
+    # build / outputs / packages 三个产物目录统一挂到 MVS_WORK_DIR 下，原因有两条：
+    #   1. 可执行性：项目所在的 /data_autodrive 是 yrfs 网络文件系统，不支持
+    #      execve()，编译出的 colmap / mvs_reconstruct 等二进制在其上无法运行
+    #      （报 "Invalid argument"）。build 和 packages 里都是可执行文件。
+    #   2. 性能：重建产物（深度图、稠密点云）体积大、随机写多，本地 ext4 远快于 yrfs。
+    #
+    # 换位置只需改一个变量（需指向本地 ext4，不能是 yrfs）：
+    #   MVS_WORK_DIR=/your/ext4/path docker-compose run --rm mvs
+    volumes:
+      - .:/workspace
+      - ${MVS_WORK_DIR:-/data/mvs-build}/build:/workspace/build
+      - ${MVS_WORK_DIR:-/data/mvs-build}/outputs:/workspace/outputs
+      - ${MVS_WORK_DIR:-/data/mvs-build}/packages:/workspace/packages
+      # COLMAP 的 poselib/faiss 依赖走 git+ssh 拉取（见
+      # 3rd/colmap-4.1.1/src/thirdparty/CMakeLists.txt），需要宿主机的 GitHub 私钥。
+      # 只读挂载；镜像里 uid 1000 是基础镜像自带的 ubuntu 用户，HOME=/home/ubuntu。
+      - ${HOME}/.ssh:/home/ubuntu/.ssh:ro
+    working_dir: /workspace
+    # OpenMVS/COLMAP 部分阶段使用共享内存，默认 64MB 偏小
+    shm_size: "8gb"
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

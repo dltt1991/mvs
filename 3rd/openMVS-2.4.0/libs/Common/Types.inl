@@ -3107,8 +3107,13 @@ static bool SaveImage(const cv::Mat& img, const String& fileName)
 		compression_params.push_back(95);
 	} else
 	if (ext == ".jxl") {
+		// cv::IMWRITE_JPEGXL_QUALITY 是 OpenCV 4.8 才加入的，Ubuntu 24.04 自带 4.6.0。
+		// 旧版本下不传压缩参数，走 cv::imwrite 默认值。OpenMVS 自身的 JXL 编解码在
+		// libs/IO/ImageJXL.cpp 里直接用 libjxl，不依赖这个常量。
+		#if CV_VERSION_MAJOR > 4 || (CV_VERSION_MAJOR == 4 && CV_VERSION_MINOR >= 8)
 		compression_params.push_back(cv::IMWRITE_JPEGXL_QUALITY);
 		compression_params.push_back(95);
+		#endif
 	} else
 	if (ext == ".pfm") {
 		if (img.depth() != CV_32F)

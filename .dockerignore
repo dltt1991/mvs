@@ -1,0 +1,10 @@
+# 镜像只需要 docker/entrypoint.sh，源码在运行时通过 bind mount 挂入，
+# 因此把重目录全部排除在构建上下文之外。
+.git
+3rd
+data
+build
+outputs
+packages
+**/__pycache__
+**/*.pyc
