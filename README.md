@@ -19,7 +19,7 @@
 
 说明：Git 仓库中不提交 `data/` 下的实际数据、`packages/`、`build/` 和 `outputs/`。其中 `data/` 用于本地输入图片和相机参数，仅保留 [`data/README.md`](data/README.md)；`packages/` 是打包输出目录，`build/` 是本地编译目录，`outputs/` 是重建运行产物。
 
-用 Docker 时，`build/`、`outputs/`、`packages/` 这三个目录是挂载点，实际内容在宿主机的 `MVS_WORK_DIR`（默认 `/data/mvs-build`）下，不在项目目录里。文档中出现的这些相对路径在容器内依然有效。详见下面的[产物目录 `MVS_WORK_DIR`](#产物目录-mvs_work_dir)。
+用 Docker 时，`build/`、`outputs/`、`packages/` 这三个目录是挂载点，实际内容在宿主机的 `MVS_WORK_DIR`（默认 `/data/taoguo/mvs-workspace`）下，不在项目目录里。文档中出现的这些相对路径在容器内依然有效。详见下面的[产物目录 `MVS_WORK_DIR`](#产物目录-mvs_work_dir)。
 
 ## 核心组件职责
 
@@ -161,7 +161,7 @@ docker-compose run --rm mvs
 #### 产物目录 `MVS_WORK_DIR`
 
 `build/`、`outputs/`、`packages/` 三个目录不落在项目目录里，而是统一挂载到
-`MVS_WORK_DIR`（默认 `/data/mvs-build`）下的同名子目录：
+`MVS_WORK_DIR`（默认 `/data/taoguo/mvs-workspace`）下的同名子目录：
 
 ```bash
 # 换到别的位置，三个目录会一起跟过去

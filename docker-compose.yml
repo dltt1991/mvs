@@ -22,9 +22,9 @@ services:
     #   MVS_WORK_DIR=/your/ext4/path docker-compose run --rm mvs
     volumes:
       - .:/workspace
-      - ${MVS_WORK_DIR:-/data/mvs-build}/build:/workspace/build
-      - ${MVS_WORK_DIR:-/data/mvs-build}/outputs:/workspace/outputs
-      - ${MVS_WORK_DIR:-/data/mvs-build}/packages:/workspace/packages
+      - ${MVS_WORK_DIR:-/data/taoguo/mvs-workspace}/build:/workspace/build
+      - ${MVS_WORK_DIR:-/data/taoguo/mvs-workspace}/outputs:/workspace/outputs
+      - ${MVS_WORK_DIR:-/data/taoguo/mvs-workspace}/packages:/workspace/packages
       # COLMAP 的 poselib/faiss 依赖走 git+ssh 拉取（见
       # 3rd/colmap-4.1.1/src/thirdparty/CMakeLists.txt），需要宿主机的 GitHub 私钥。
       # 只读挂载；镜像里 uid 1000 是基础镜像自带的 ubuntu 用户，HOME=/home/ubuntu。

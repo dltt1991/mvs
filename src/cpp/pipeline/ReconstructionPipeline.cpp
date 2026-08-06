@@ -308,6 +308,10 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
                                       "--output_path",
                                       sparseDir.string()};
   appendColmapThreads(mapperArgs, "--Mapper.num_threads", config.maxThreads);
+  if (config.mapperBundleAdjustmentGpu) {
+    appendOption(mapperArgs, "--Mapper.ba_global_use_gpu", "1");
+    appendOption(mapperArgs, "--BundleAdjustmentCeres.use_gpu", "1");
+  }
   pushStage(plan,
             stage("mapper",
                   "COLMAP / pycolmap：增量 SfM、相机位姿估计、稀疏点云重建",

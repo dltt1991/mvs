@@ -155,7 +155,7 @@ docker build \
 
 | 变量 | 默认值 | 作用 |
 | --- | --- | --- |
-| `MVS_WORK_DIR` | `/data/mvs-build` | 宿主机产物根目录，`build/`、`outputs/`、`packages/` 挂载到它下面。**必须是本地盘** |
+| `MVS_WORK_DIR` | `/data/taoguo/mvs-workspace` | 宿主机产物根目录，`build/`、`outputs/`、`packages/` 挂载到它下面。**必须是本地盘** |
 | `DATA_ROOT` | `/workspace/data` | 容器内输入数据目录（图片 + `cameras.json`） |
 | `RUN_NAME` | `default` | 本次重建的名字，产物落在 `outputs/<RUN_NAME>/` |
 | `OUTPUT_DIR` | `outputs/<RUN_NAME>` | 直接指定输出目录，优先于 `RUN_NAME` |
@@ -168,9 +168,9 @@ docker build \
 `build/`、`outputs/`、`packages/` 不放在项目目录里，而是统一挂到 `MVS_WORK_DIR` 下：
 
 ```yaml
-- ${MVS_WORK_DIR:-/data/mvs-build}/build:/workspace/build
-- ${MVS_WORK_DIR:-/data/mvs-build}/outputs:/workspace/outputs
-- ${MVS_WORK_DIR:-/data/mvs-build}/packages:/workspace/packages
+- ${MVS_WORK_DIR:-/data/taoguo/mvs-workspace}/build:/workspace/build
+- ${MVS_WORK_DIR:-/data/taoguo/mvs-workspace}/outputs:/workspace/outputs
+- ${MVS_WORK_DIR:-/data/taoguo/mvs-workspace}/packages:/workspace/packages
 ```
 
 原因有两条：
@@ -224,9 +224,9 @@ docker run --rm -it \
   --gpus all \
   --shm-size 8g \
   -v $(pwd):/workspace \
-  -v /data/mvs-build/build:/workspace/build \
-  -v /data/mvs-build/outputs:/workspace/outputs \
-  -v /data/mvs-build/packages:/workspace/packages \
+  -v /data/taoguo/mvs-workspace/build:/workspace/build \
+  -v /data/taoguo/mvs-workspace/outputs:/workspace/outputs \
+  -v /data/taoguo/mvs-workspace/packages:/workspace/packages \
   -v $HOME/.ssh:/home/ubuntu/.ssh:ro \
   -w /workspace \
   mvs-build:cuda12.6-ubuntu24.04 \
@@ -371,19 +371,40 @@ docker-compose build
 bash scripts/build.sh   # 而不是 ./scripts/build.sh
 ```
 
-### 3c. 挂载目录 `Permission denied`
+### 3c. 挂载目录 `Permission denied`，或 CMake 报 `Unable to (re)create the private pkgRedirects directory`
 
 **原因**：Docker 创建宿主机上不存在的挂载点时用的是 root 属主，容器内非 root
-用户写不进去。
+用户写不进去。CMake 抛出的
+`Unable to (re)create the private pkgRedirects directory: /workspace/build/CMakeFiles/pkgRedirects`
+是同一个问题，只是错误信息看不出根因。
+
+改了 `MVS_WORK_DIR`（或改了 `docker-compose.yml` 里的默认值）而新路径还没建过，
+最容易踩到这个坑。entrypoint 现在会在启动时检查这三个目录的可写性并直接给出
+修复命令，不会再让它以 CMake 错误的形式暴露出来。
 
 **解决**：先在宿主机建好目录（属主为你自己），再启动容器。
 
 ```bash
-install -d /data/mvs-build/{build,outputs,packages}
+install -d /data/taoguo/mvs-workspace/{build,outputs,packages}
+```
+
+目录已经被 docker 建成 root 属主了，用 `chown` 修：
+
+```bash
+sudo chown -R "$(id -u):$(id -g)" /data/taoguo/mvs-workspace
+```
+
+没有 sudo 权限时，只要目录是空的就可以直接重建（删除权限来自父目录，不需要
+对目录本身有写权限）：
+
+```bash
+rmdir /data/taoguo/mvs-workspace/{build,outputs,packages}
+mkdir -p /data/taoguo/mvs-workspace/{build,outputs,packages}
 ```
 
 镜像里 `/workspace/build`、`/workspace/outputs`、`/workspace/packages` 已经预建
-并设为构建时传入的 `USER_ID:GROUP_ID`，新增其他挂载点时需要同样处理。
+并设为构建时传入的 `USER_ID:GROUP_ID`，但 bind mount 会用宿主机目录的属主覆盖
+镜像里的设置，所以宿主机侧的属主才是决定性的。新增其他挂载点时需要同样处理。
 
 ### 3d. `Error while fetching server API version: ... PermissionError(13)`
 

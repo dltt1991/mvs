@@ -17,6 +17,10 @@ struct Config {
   std::string matcher = "exhaustive";
   int sequentialOverlap = 10;
   bool sequentialQuadraticOverlap = true;
+  // COLMAP mapper 的 Bundle Adjustment GPU 加速。默认关闭，且即使开启，
+  // 图片数低于 min_num_images_gpu_solver（默认 50）时 COLMAP 仍会回退到 CPU。
+  // 特征提取和匹配的 GPU 加速无需此选项，它们默认已启用（use_gpu=1）。
+  bool mapperBundleAdjustmentGpu = false;
   int densifyNumberViews = 5;
   int densifyNumberViewsFuse = 2;
   int densifyGeometricIters = 2;

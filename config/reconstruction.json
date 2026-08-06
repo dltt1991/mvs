@@ -61,6 +61,13 @@
   // CLI override: --sequential-quadratic-overlap
   "sequential_quadratic_overlap": true,
 
+  // Enable GPU acceleration for Bundle Adjustment in COLMAP mapper.
+  // Candidates: false = default, CPU-only BA; true = GPU BA when image count >= min_num_images_gpu_solver (default 50).
+  // COLMAP's feature extraction and matching already use GPU by default (use_gpu=1) without this option.
+  // For datasets with <50 images, enabling this has no effect as COLMAP falls back to CPU.
+  // CLI override: --mapper-ba-use-gpu
+  "mapper_ba_use_gpu": false,
+
   // Number of neighbor views used by OpenMVS for depth-map estimation.
   // Candidates: 5 = OpenMVS default; 4 = moderate speed experiment; 3 = aggressive speed experiment.
   // CLI override: --densify-number-views

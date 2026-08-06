@@ -144,6 +144,7 @@ void applyConfigFile(Config& config, const std::filesystem::path& path) {
   applyJsonString(json, "matcher", config.matcher);
   applyJsonInt(json, "sequential_overlap", config.sequentialOverlap);
   applyJsonBool(json, "sequential_quadratic_overlap", config.sequentialQuadraticOverlap);
+  applyJsonBool(json, "mapper_ba_use_gpu", config.mapperBundleAdjustmentGpu);
   applyJsonInt(json, "densify_number_views", config.densifyNumberViews);
   applyJsonInt(json, "densify_number_views_fuse", config.densifyNumberViewsFuse);
   applyJsonInt(json, "densify_geometric_iters", config.densifyGeometricIters);
@@ -222,6 +223,11 @@ Config parseArgs(int argc, char** argv) {
     config.sequentialQuadraticOverlap = parseBool(
         optionalOption(options, "--sequential-quadratic-overlap", "1"),
         "--sequential-quadratic-overlap");
+  }
+  if (hasOption(options, "--mapper-ba-use-gpu")) {
+    config.mapperBundleAdjustmentGpu = parseBool(
+        optionalOption(options, "--mapper-ba-use-gpu", "0"),
+        "--mapper-ba-use-gpu");
   }
   if (hasOption(options, "--densify-number-views")) {
     config.densifyNumberViews =
