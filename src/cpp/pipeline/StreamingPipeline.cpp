@@ -1,5 +1,7 @@
 #include "pipeline/StreamingPipeline.h"
+#include "pipeline/CameraConfig.h"
 #include "pipeline/ProcessRunner.h"
+#include "pipeline/ReconstructionPipeline.h"
 
 #include <colmap/scene/reconstruction.h>
 
@@ -10,8 +12,8 @@
 #include <algorithm>
 #include <chrono>
 #include <iostream>
-#include <map>
 #include <mutex>
+#include <sstream>
 #include <stdexcept>
 #include <thread>
 #include <unordered_map>
@@ -19,211 +21,344 @@
 namespace mvs {
 namespace {
 
-// COLMAP 相机模型 -> OpenCV 畸变系数 (k1,k2,p1,p2)
-// COLMAP 去畸变后的图像使用 PINHOLE 模型，所以这里必须精确还原畸变模型
+// ── 去畸变参数提取 ──────────────────────────────────────────────────────────
+
 std::vector<double> distCoeffsFor(const colmap::Camera& camera) {
-  const std::string model = camera.ModelName();
-  if (model == "SIMPLE_PINHOLE" || model == "PINHOLE") {
-    return {0.0, 0.0, 0.0, 0.0};
-  }
-  if (model == "SIMPLE_RADIAL") {
-    // params: f, cx, cy, k
-    return {camera.params[3], 0.0, 0.0, 0.0};
-  }
-  if (model == "RADIAL") {
-    // params: f, cx, cy, k1, k2
-    return {camera.params[3], camera.params[4], 0.0, 0.0};
-  }
-  if (model == "OPENCV") {
-    // params: fx, fy, cx, cy, k1, k2, p1, p2
+  const std::string m = camera.ModelName();
+  if (m == "SIMPLE_PINHOLE" || m == "PINHOLE") return {0, 0, 0, 0};
+  if (m == "SIMPLE_RADIAL")  return {camera.params[3], 0, 0, 0};
+  if (m == "RADIAL")         return {camera.params[3], camera.params[4], 0, 0};
+  if (m == "OPENCV")
     return {camera.params[4], camera.params[5], camera.params[6], camera.params[7]};
-  }
-  if (model == "FULL_OPENCV") {
-    // params: fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6
+  if (m == "FULL_OPENCV")
     return {camera.params[4], camera.params[5], camera.params[6], camera.params[7],
             camera.params[8], camera.params[9], camera.params[10], camera.params[11]};
+  throw std::runtime_error("unsupported camera model: " + m);
+}
+
+// ── 计时辅助 ────────────────────────────────────────────────────────────────
+
+using Clock = std::chrono::steady_clock;
+using TimePoint = Clock::time_point;
+
+double elapsed(TimePoint t0) {
+  return std::chrono::duration<double>(Clock::now() - t0).count();
+}
+
+std::string fmtDur(double s) {
+  std::ostringstream ss;
+  if (s < 60.0) {
+    ss.precision(2);
+    ss << std::fixed << s << "s";
+  } else {
+    int m = static_cast<int>(s) / 60;
+    ss << m << "m" << static_cast<int>(s) % 60 << "s";
   }
-  throw std::runtime_error("unsupported camera model for streaming undistort: " + model);
+  return ss.str();
 }
 
 } // namespace
 
+// ══════════════════════════════════════════════════════════════════════════════
+// 构造函数
+// ══════════════════════════════════════════════════════════════════════════════
+
+StreamingPipeline::StreamingPipeline(const Config& config,
+                                     const std::filesystem::path& outputDir)
+    : config_(config), outputDir_(outputDir) {
+  namespace fs = std::filesystem;
+  colmapDir_     = outputDir_ / "colmap";
+  openMvsDir_    = outputDir_ / "openmvs";
+  logsDir_       = outputDir_ / "logs";
+  imageListFile_ = colmapDir_ / "image_list.txt";
+  database_      = colmapDir_ / "database.db";
+  sparseDir_     = colmapDir_ / "sparse";
+  sparseModel_   = sparseDir_ / "0";
+  sceneMvs_      = openMvsDir_ / "scene.mvs";
+  denseMvs_      = openMvsDir_ / "scene_dense.mvs";
+  meshPly_       = openMvsDir_ / "scene_mesh.ply";
+  texturePly_    = openMvsDir_ / "scene_texture.ply";
+}
+
 StreamingPipeline::StreamingPipeline(const Config& config,
                                      const std::filesystem::path& sparseModel,
                                      const std::filesystem::path& outputDir)
-    : config_(config),
-      sparseModel_(sparseModel),
-      outputDir_(outputDir) {}
+    : StreamingPipeline(config, outputDir) {
+  sparseModel_ = sparseModel;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 公开入口
+// ══════════════════════════════════════════════════════════════════════════════
+
+int StreamingPipeline::runFull() {
+  namespace fs = std::filesystem;
+
+  // 把配置中的相对路径解析为绝对路径（相对于进程的当前工作目录，即 /workspace）
+  // 否则子进程 chdir 到 outputDir_ 后会找不到 build/third_party/... 等路径
+  const auto cwd = fs::current_path();
+  auto toAbs = [&](const std::string& p) -> std::string {
+    if (p.empty()) return p;
+    const fs::path fp(p);
+    return fp.is_absolute() ? p : (cwd / fp).lexically_normal().string();
+  };
+  config_.colmapBinary  = toAbs(config_.colmapBinary);
+  config_.openMvsBinDir = toAbs(config_.openMvsBinDir);
+  config_.imagesDir     = toAbs(config_.imagesDir);
+  config_.camerasJson   = toAbs(config_.camerasJson);
+  if (!config_.outputDir.empty())
+    config_.outputDir   = toAbs(config_.outputDir);
+  outputDir_ = toAbs(outputDir_.string());
+
+  fs::create_directories(colmapDir_ / "sparse");
+  fs::create_directories(openMvsDir_);
+  fs::create_directories(logsDir_);
+  fs::create_directories(outputDir_ / "images");
+
+  writeSortedImageList(config_.imagesDir, imageListFile_);
+
+  std::cout << "== 多视角三维重建（流式管线）开始 ==" << std::endl;
+
+  // 读取相机参数（用于特征提取的初始内参）
+  const auto t0 = Clock::now();
+  std::cout << "[cameras] 读取相机参数: " << config_.camerasJson << std::flush;
+  const auto dataset = loadCameraDataset(config_.camerasJson);
+  const auto camera  = medianSimpleRadialCamera(dataset);
+  std::cout << " 完成 (" << fmtDur(elapsed(t0)) << ")，"
+            << dataset.numImages << " 张，注册: " << dataset.numRegistered << std::endl;
+
+  // ── COLMAP 阶段 ──────────────────────────────────────────────────────────
+  stageFeatureExtractor(camera);
+  stageMatcher();
+  stageMapper();
+
+  // ── 流式阶段（取代 undistorter + InterfaceCOLMAP）─────────────────────────
+  const auto tScene = Clock::now();
+  std::cout << "[streaming] buildScene..." << std::flush;
+  const auto jobs = buildScene();
+  std::cout << " 完成 (" << fmtDur(elapsed(tScene)) << ")" << std::endl;
+
+  const auto tUndist = Clock::now();
+  std::cout << "[streaming] undistortParallel (" << jobs.size() << " 张, "
+            << (config_.maxThreads > 0 ? config_.maxThreads : (int)std::thread::hardware_concurrency())
+            << " 线程)..." << std::flush;
+  undistortParallel(jobs);
+  std::cout << " 完成 (" << fmtDur(elapsed(tUndist)) << ")" << std::endl;
+
+  // ── OpenMVS 阶段 ─────────────────────────────────────────────────────────
+  stageDensify();
+  stageReconstructMesh();
+  if (config_.generateTexture) {
+    stageTextureMesh();
+  }
+
+  std::cout << std::endl;
+  std::cout << "== 完成，总耗时: " << fmtDur(elapsed(t0)) << " ==" << std::endl;
+  return 0;
+}
 
 void StreamingPipeline::run() {
-  std::cout << "=== 流式融合管线 ===" << std::endl;
-  std::cout << "策略: 直接写 OpenMVS 场景 + 多线程去畸变（绕过 undistorter/InterfaceCOLMAP）" << std::endl;
-  std::cout << "Sparse model: " << sparseModel_ << std::endl;
-  std::cout << "输出目录: " << outputDir_ << std::endl;
-  std::cout << std::endl;
+  namespace fs = std::filesystem;
 
-  std::filesystem::create_directories(outputDir_ / "images");
-  std::filesystem::create_directories(outputDir_ / "openmvs");
+  fs::create_directories(outputDir_ / "images");
+  fs::create_directories(openMvsDir_);
 
-  const auto t0 = std::chrono::steady_clock::now();
+  const auto t0 = Clock::now();
+  const auto jobs = buildScene();
+  std::cout << "[Scene] 完成 (" << fmtDur(elapsed(t0)) << ")" << std::endl;
 
-  // 阶段 1：构建场景（毫秒级，取代 InterfaceCOLMAP）
-  const std::vector<UndistortJob> jobs = buildScene();
-  const auto t1 = std::chrono::steady_clock::now();
-  const double sceneTime = std::chrono::duration<double>(t1 - t0).count();
-  std::cout << "[Scene] scene.mvs 写入完成，耗时: " << sceneTime << "s" << std::endl;
-  std::cout << std::endl;
-
-  // 阶段 2：多线程去畸变（取代 COLMAP image_undistorter）
+  const auto t1 = Clock::now();
   undistortParallel(jobs);
-  const auto t2 = std::chrono::steady_clock::now();
-  const double undistortTime = std::chrono::duration<double>(t2 - t1).count();
-  std::cout << "[Undistort] 全部完成，耗时: " << undistortTime << "s" << std::endl;
-  std::cout << std::endl;
+  std::cout << "[Undistort] 完成 (" << fmtDur(elapsed(t1)) << ")" << std::endl;
 
-  // 阶段 3：稠密化
-  const bool ok = densify();
-  const auto t3 = std::chrono::steady_clock::now();
-  const double densifyTime = std::chrono::duration<double>(t3 - t2).count();
-  const double total = std::chrono::duration<double>(t3 - t0).count();
+  const auto t2 = Clock::now();
+  stageDensify();
+  std::cout << "[Densify] 完成 (" << fmtDur(elapsed(t2)) << ")" << std::endl;
 
-  std::cout << std::endl;
-  std::cout << "=== 流式管线完成 ===" << std::endl;
-  std::cout << "  scene.mvs 构建 : " << sceneTime << "s" << std::endl;
-  std::cout << "  去畸变         : " << undistortTime << "s" << std::endl;
-  std::cout << "  DensifyPointCloud: " << densifyTime << "s" << std::endl;
-  std::cout << "  总耗时         : " << total << "s" << std::endl;
+  std::cout << "总耗时: " << fmtDur(elapsed(t0)) << std::endl;
+}
 
-  if (!ok) {
-    throw std::runtime_error("DensifyPointCloud failed; see densify_streaming.log");
+// ══════════════════════════════════════════════════════════════════════════════
+// 私有阶段实现
+// ══════════════════════════════════════════════════════════════════════════════
+
+void StreamingPipeline::stageFeatureExtractor(const CameraIntrinsics& camera) {
+  const std::string cameraParams =
+      std::to_string(camera.f) + "," +
+      std::to_string(camera.cx) + "," +
+      std::to_string(camera.cy) + "," +
+      std::to_string(camera.k1);
+
+  std::vector<std::string> args{
+    config_.colmapBinary, "feature_extractor",
+    "--database_path", database_.string(),
+    "--image_path", config_.imagesDir,
+    "--image_list_path", imageListFile_.string(),
+    "--ImageReader.single_camera", "1",
+    "--ImageReader.camera_model", camera.model,
+    "--ImageReader.camera_params", cameraParams
+  };
+  if (config_.maxThreads > 0)
+    args.insert(args.end(), {"--FeatureExtraction.num_threads",
+                              std::to_string(config_.maxThreads)});
+
+  runStage("COLMAP 特征提取", std::move(args), logsDir_ / "feature_extractor.log");
+}
+
+void StreamingPipeline::stageMatcher() {
+  const std::string matcherName =
+      config_.matcher == "sequential" ? "sequential_matcher" : "exhaustive_matcher";
+
+  std::vector<std::string> args{
+    config_.colmapBinary, matcherName,
+    "--database_path", database_.string()
+  };
+  if (config_.maxThreads > 0)
+    args.insert(args.end(), {"--FeatureMatching.num_threads",
+                              std::to_string(config_.maxThreads)});
+  if (config_.matcher == "sequential") {
+    args.insert(args.end(), {
+      "--SequentialMatching.overlap", std::to_string(config_.sequentialOverlap),
+      "--SequentialMatching.quadratic_overlap",
+      config_.sequentialQuadraticOverlap ? "1" : "0"
+    });
   }
+
+  const std::string display = config_.matcher == "sequential"
+                                  ? "COLMAP 顺序特征匹配"
+                                  : "COLMAP 特征匹配";
+  runStage(display, std::move(args), logsDir_ / (matcherName + ".log"));
+}
+
+void StreamingPipeline::stageMapper() {
+  std::vector<std::string> args{
+    config_.colmapBinary, "mapper",
+    "--database_path", database_.string(),
+    "--image_path", config_.imagesDir,
+    "--Mapper.image_list_path", imageListFile_.string(),
+    "--output_path", sparseDir_.string()
+  };
+  if (config_.maxThreads > 0)
+    args.insert(args.end(), {"--Mapper.num_threads",
+                              std::to_string(config_.maxThreads)});
+  if (config_.mapperBundleAdjustmentGpu) {
+    args.insert(args.end(), {
+      "--Mapper.ba_global_use_gpu", "1",
+      "--BundleAdjustmentCeres.use_gpu", "1"
+    });
+  }
+
+  runStage("COLMAP 增量 SfM", std::move(args), logsDir_ / "mapper.log");
 }
 
 std::vector<UndistortJob> StreamingPipeline::buildScene() {
-  std::cout << "[Scene] 加载 sparse reconstruction..." << std::endl;
   colmap::Reconstruction reconstruction;
   reconstruction.Read(sparseModel_);
-  std::cout << "[Scene] 已加载: " << reconstruction.NumRegImages() << " 张图像, "
-            << reconstruction.NumCameras() << " 个相机, "
-            << reconstruction.NumPoints3D() << " 个 3D 点" << std::endl;
 
   MVS::Interface scene;
 
-  // 每个 COLMAP 相机对应一个 platform，platform 内 cameraID 恒为 0
-  // （与 InterfaceCOLMAP 一致：OpenMVS 内部 ASSERT(image.cameraID == 0)）
-  std::unordered_map<colmap::camera_t, uint32_t> cameraToPlatform;
-  for (const auto& [cameraId, camera] : reconstruction.Cameras()) {
+  // 每个 COLMAP 相机 → 一个 platform，cameraID 恒为 0
+  std::unordered_map<colmap::camera_t, uint32_t> camToPlatform;
+  for (const auto& [camId, cam] : reconstruction.Cameras()) {
     MVS::Interface::Platform platform;
-    platform.name = "platform" + std::to_string(cameraId);
+    platform.name = "platform" + std::to_string(camId);
 
     MVS::Interface::Platform::Camera mvsCamera;
-    mvsCamera.name = camera.ModelName();
-    mvsCamera.width = static_cast<uint32_t>(camera.width);
-    mvsCamera.height = static_cast<uint32_t>(camera.height);
-    // 去畸变后为 PINHOLE；COLMAP 像素中心在 (0.5,0.5)，OpenMVS 在整数坐标
+    mvsCamera.name   = cam.ModelName();
+    mvsCamera.width  = static_cast<uint32_t>(cam.width);
+    mvsCamera.height = static_cast<uint32_t>(cam.height);
     mvsCamera.K = MVS::Interface::Mat33d::eye();
-    mvsCamera.K(0, 0) = camera.FocalLengthX();
-    mvsCamera.K(1, 1) = camera.FocalLengthY();
-    mvsCamera.K(0, 2) = camera.PrincipalPointX() - 0.5;
-    mvsCamera.K(1, 2) = camera.PrincipalPointY() - 0.5;
+    mvsCamera.K(0,0) = cam.FocalLengthX();
+    mvsCamera.K(1,1) = cam.FocalLengthY();
+    mvsCamera.K(0,2) = cam.PrincipalPointX() - 0.5;  // COLMAP(0.5,0.5) → OpenMVS 整数
+    mvsCamera.K(1,2) = cam.PrincipalPointY() - 0.5;
     mvsCamera.R = MVS::Interface::Mat33d::eye();
     mvsCamera.C = MVS::Interface::Pos3d(0, 0, 0);
     platform.cameras.push_back(mvsCamera);
 
-    cameraToPlatform[cameraId] = static_cast<uint32_t>(scene.platforms.size());
+    camToPlatform[camId] = static_cast<uint32_t>(scene.platforms.size());
     scene.platforms.push_back(std::move(platform));
   }
 
-  // 图像：COLMAP 全局 image_id -> OpenMVS 局部下标
-  std::unordered_map<colmap::image_t, uint32_t> imageToLocal;
+  // 图像：全局 image_id → 局部下标
+  std::unordered_map<colmap::image_t, uint32_t> imgToLocal;
   std::vector<UndistortJob> jobs;
 
-  std::vector<colmap::image_t> imageIds = reconstruction.RegImageIds();
-  std::sort(imageIds.begin(), imageIds.end());
+  std::vector<colmap::image_t> ids = reconstruction.RegImageIds();
+  std::sort(ids.begin(), ids.end());
 
-  for (const colmap::image_t imageId : imageIds) {
-    const colmap::Image& image = reconstruction.Image(imageId);
+  for (const colmap::image_t imgId : ids) {
+    const colmap::Image&  image  = reconstruction.Image(imgId);
     const colmap::Camera& camera = reconstruction.Camera(image.CameraId());
 
-    const uint32_t platformId = cameraToPlatform.at(image.CameraId());
-    MVS::Interface::Platform& platform = scene.platforms[platformId];
+    const uint32_t platId = camToPlatform.at(image.CameraId());
+    auto& platform = scene.platforms[platId];
 
-    MVS::Interface::Image mvsImage;
-    // 绝对路径：DensifyPointCloud 的 working-folder 与图像目录不同
-    mvsImage.name = (outputDir_ / "images" / image.Name()).string();
-    mvsImage.platformID = platformId;
-    mvsImage.cameraID = 0;
-    mvsImage.ID = imageId;
-
-    // 位姿：OpenMVS 的 R 是 world->camera，C 是相机中心（world 坐标）
-    const colmap::Rigid3d& camFromWorld = image.CamFromWorld();
-    const Eigen::Matrix3d R = camFromWorld.rotation().toRotationMatrix();
-    const Eigen::Vector3d t = camFromWorld.translation();
+    // 位姿：world→camera 的 R；相机中心 C = -R^T * t
+    const Eigen::Matrix3d R = image.CamFromWorld().rotation().toRotationMatrix();
+    const Eigen::Vector3d t = image.CamFromWorld().translation();
     const Eigen::Vector3d C = -(R.transpose() * t);
 
     MVS::Interface::Platform::Pose pose;
-    for (int r = 0; r < 3; ++r) {
-      for (int c = 0; c < 3; ++c) {
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 3; ++c)
         pose.R(r, c) = R(r, c);
-      }
-    }
     pose.C = MVS::Interface::Pos3d(C.x(), C.y(), C.z());
 
-    mvsImage.poseID = static_cast<uint32_t>(platform.poses.size());
+    MVS::Interface::Image mvsImg;
+    mvsImg.name       = (outputDir_ / "images" / image.Name()).string();
+    mvsImg.platformID = platId;
+    mvsImg.cameraID   = 0;
+    mvsImg.ID         = imgId;
+    mvsImg.poseID     = static_cast<uint32_t>(platform.poses.size());
     platform.poses.push_back(pose);
 
-    imageToLocal[imageId] = static_cast<uint32_t>(scene.images.size());
-    scene.images.push_back(std::move(mvsImage));
+    imgToLocal[imgId] = static_cast<uint32_t>(scene.images.size());
+    scene.images.push_back(std::move(mvsImg));
 
     // 去畸变任务
     UndistortJob job;
-    job.inputPath = std::filesystem::path(config_.imagesDir) / image.Name();
+    job.inputPath  = std::filesystem::path(config_.imagesDir) / image.Name();
     job.outputPath = outputDir_ / "images" / image.Name();
     job.cameraMatrix = cv::Matx33d(
-        camera.FocalLengthX(), 0.0, camera.PrincipalPointX(),
-        0.0, camera.FocalLengthY(), camera.PrincipalPointY(),
-        0.0, 0.0, 1.0);
+        camera.FocalLengthX(), 0, camera.PrincipalPointX(),
+        0, camera.FocalLengthY(), camera.PrincipalPointY(),
+        0, 0, 1);
     job.distCoeffs = distCoeffsFor(camera);
     jobs.push_back(std::move(job));
   }
 
-  // 3D 点：views 使用局部下标并按下标排序（与 InterfaceCOLMAP 一致）
-  for (const auto& [pointId, point] : reconstruction.Points3D()) {
+  // 3D 点（局部下标 + 按下标升序）
+  for (const auto& [ptId, pt] : reconstruction.Points3D()) {
     MVS::Interface::Vertex vertex;
     vertex.X = MVS::Interface::Pos3f(
-        static_cast<float>(point.xyz.x()),
-        static_cast<float>(point.xyz.y()),
-        static_cast<float>(point.xyz.z()));
+        static_cast<float>(pt.xyz.x()),
+        static_cast<float>(pt.xyz.y()),
+        static_cast<float>(pt.xyz.z()));
 
-    for (const auto& element : point.track.Elements()) {
-      const auto it = imageToLocal.find(element.image_id);
-      if (it == imageToLocal.end()) {
-        continue;  // 未注册的图像
-      }
+    for (const auto& el : pt.track.Elements()) {
+      const auto it = imgToLocal.find(el.image_id);
+      if (it == imgToLocal.end()) continue;
       MVS::Interface::Vertex::View view;
-      view.imageID = it->second;
+      view.imageID   = it->second;
       view.confidence = 0.0f;
       vertex.views.push_back(view);
     }
-    if (vertex.views.size() < 2) {
-      continue;
-    }
+    if (vertex.views.size() < 2) continue;
     std::sort(vertex.views.begin(), vertex.views.end(),
               [](const MVS::Interface::Vertex::View& a,
-                 const MVS::Interface::Vertex::View& b) { return a.imageID < b.imageID; });
+                 const MVS::Interface::Vertex::View& b) {
+                return a.imageID < b.imageID;
+              });
 
     scene.vertices.push_back(std::move(vertex));
     scene.verticesColor.push_back(MVS::Interface::Color{
-        MVS::Interface::Col3(point.color(2), point.color(1), point.color(0))});  // BGR
+        MVS::Interface::Col3(pt.color(2), pt.color(1), pt.color(0))});
   }
 
-  std::cout << "[Scene] 场景: " << scene.platforms.size() << " platform, "
-            << scene.images.size() << " 图像, " << scene.vertices.size() << " 点" << std::endl;
+  if (!MVS::ARCHIVE::SerializeSave(scene, sceneMvs_.string()))
+    throw std::runtime_error("failed to write " + sceneMvs_.string());
 
-  const std::filesystem::path scenePath = outputDir_ / "openmvs" / "scene.mvs";
-  if (!MVS::ARCHIVE::SerializeSave(scene, scenePath.string())) {
-    throw std::runtime_error("failed to write " + scenePath.string());
-  }
   return jobs;
 }
 
@@ -231,96 +366,122 @@ void StreamingPipeline::undistortParallel(const std::vector<UndistortJob>& jobs)
   unsigned threads = config_.maxThreads > 0
                          ? static_cast<unsigned>(config_.maxThreads)
                          : std::thread::hardware_concurrency();
-  if (threads == 0) {
-    threads = 4;
-  }
+  if (threads == 0) threads = 4;
   threads = std::min<unsigned>(threads, static_cast<unsigned>(jobs.size()));
 
-  std::cout << "[Undistort] " << jobs.size() << " 张图像，" << threads << " 线程" << std::endl;
-
   std::atomic<size_t> next{0};
-  std::mutex errorMutex;
+  std::mutex errMu;
   std::vector<std::string> errors;
 
   const auto worker = [&]() {
     for (;;) {
-      const size_t index = next.fetch_add(1);
-      if (index >= jobs.size()) {
-        return;
-      }
-      const UndistortJob& job = jobs[index];
+      const size_t idx = next.fetch_add(1);
+      if (idx >= jobs.size()) return;
+      const UndistortJob& job = jobs[idx];
 
-      const cv::Mat original = cv::imread(job.inputPath.string(), cv::IMREAD_COLOR);
-      if (original.empty()) {
-        std::lock_guard<std::mutex> lock(errorMutex);
+      cv::Mat orig = cv::imread(job.inputPath.string(), cv::IMREAD_COLOR);
+      if (orig.empty()) {
+        std::lock_guard<std::mutex> lk(errMu);
         errors.push_back("cannot read " + job.inputPath.string());
         continue;
       }
-
-      cv::Mat undistorted;
-      // newCameraMatrix == cameraMatrix，保证与 scene.mvs 中声明的 PINHOLE 内参一致
-      cv::undistort(original, undistorted, job.cameraMatrix, job.distCoeffs, job.cameraMatrix);
-
-      if (!cv::imwrite(job.outputPath.string(), undistorted,
-                       {cv::IMWRITE_JPEG_QUALITY, 95})) {
-        std::lock_guard<std::mutex> lock(errorMutex);
+      cv::Mat undist;
+      cv::undistort(orig, undist, job.cameraMatrix, job.distCoeffs, job.cameraMatrix);
+      if (!cv::imwrite(job.outputPath.string(), undist, {cv::IMWRITE_JPEG_QUALITY, 95})) {
+        std::lock_guard<std::mutex> lk(errMu);
         errors.push_back("cannot write " + job.outputPath.string());
         continue;
       }
-
       const int done = ++imagesCompleted_;
-      if (done % 10 == 0 || done == static_cast<int>(jobs.size())) {
-        std::cout << "[Undistort] " << done << "/" << jobs.size() << std::endl;
-      }
+      if (done % 10 == 0 || done == static_cast<int>(jobs.size()))
+        std::cout << "  " << done << "/" << jobs.size() << std::flush;
     }
   };
 
   std::vector<std::thread> pool;
   pool.reserve(threads);
-  for (unsigned i = 0; i < threads; ++i) {
-    pool.emplace_back(worker);
-  }
-  for (std::thread& t : pool) {
-    t.join();
-  }
+  for (unsigned i = 0; i < threads; ++i) pool.emplace_back(worker);
+  for (std::thread& t : pool) t.join();
+  std::cout << std::endl;
 
-  if (!errors.empty()) {
+  if (!errors.empty())
     throw std::runtime_error("undistort failed for " + std::to_string(errors.size()) +
-                             " image(s), first: " + errors.front());
-  }
+                             " images, first: " + errors.front());
 }
 
-bool StreamingPipeline::densify() {
-  std::cout << "[Densify] 启动 DensifyPointCloud..." << std::endl;
-
-  const std::filesystem::path openmvsBin(config_.openMvsBinDir);
+void StreamingPipeline::stageDensify() {
+  const std::filesystem::path bin(config_.openMvsBinDir);
   std::vector<std::string> args{
-    (openmvsBin / "DensifyPointCloud").string(),
-    (outputDir_ / "openmvs" / "scene.mvs").string(),
-    "--working-folder", (outputDir_ / "openmvs").string(),
-    "--output-file", "scene_dense.mvs",
-    "--number-views", std::to_string(config_.densifyNumberViews),
+    (bin / "DensifyPointCloud").string(),
+    sceneMvs_.string(),
+    "--working-folder", openMvsDir_.string(),
+    "--output-file",    denseMvs_.filename().string(),
+    "--number-views",   std::to_string(config_.densifyNumberViews),
     "--number-views-fuse", std::to_string(config_.densifyNumberViewsFuse),
     "--geometric-iters", std::to_string(config_.densifyGeometricIters),
     "--resolution-level", std::to_string(config_.densifyResolutionLevel),
     "--max-resolution", std::to_string(config_.densifyMaxResolution),
-    "--iters", std::to_string(config_.densifyIters),
-    "--max-threads", std::to_string(config_.maxThreads),
-    "--remove-dmaps", config_.removeDepthMaps ? "1" : "0"
+    "--iters",          std::to_string(config_.densifyIters),
+    "--remove-dmaps",   config_.removeDepthMaps ? "1" : "0"
   };
-  if (config_.cudaDevice != -1) {
-    args.push_back("--cuda-device");
-    args.push_back(std::to_string(config_.cudaDevice));
-  }
+  if (config_.maxThreads > 0)
+    args.insert(args.end(), {"--max-threads", std::to_string(config_.maxThreads)});
+  if (config_.cudaDevice != -1)
+    args.insert(args.end(), {"--cuda-device", std::to_string(config_.cudaDevice)});
 
-  const std::filesystem::path log = outputDir_ / "densify_streaming.log";
-  const CommandResult result = runCommand(args, outputDir_, log);
+  runStage("OpenMVS DensifyPointCloud", std::move(args), logsDir_ / "densify_point_cloud.log");
+}
+
+void StreamingPipeline::stageReconstructMesh() {
+  const std::filesystem::path bin(config_.openMvsBinDir);
+  std::vector<std::string> args{
+    (bin / "ReconstructMesh").string(),
+    denseMvs_.string(),
+    "--working-folder", openMvsDir_.string(),
+    "--output-file",    meshPly_.filename().string()
+  };
+  if (config_.maxThreads > 0)
+    args.insert(args.end(), {"--max-threads", std::to_string(config_.maxThreads)});
+  if (config_.cudaDevice != -1)
+    args.insert(args.end(), {"--cuda-device", std::to_string(config_.cudaDevice)});
+
+  runStage("OpenMVS ReconstructMesh", std::move(args), logsDir_ / "reconstruct_mesh.log");
+}
+
+void StreamingPipeline::stageTextureMesh() {
+  const std::filesystem::path bin(config_.openMvsBinDir);
+  std::vector<std::string> args{
+    (bin / "TextureMesh").string(),
+    denseMvs_.string(),
+    "--working-folder", openMvsDir_.string(),
+    "--mesh-file",      meshPly_.filename().string(),
+    "--output-file",    texturePly_.filename().string(),
+    "--patch-packing-heuristic", std::to_string(config_.texturePatchPackingHeuristic)
+  };
+  if (config_.maxThreads > 0)
+    args.insert(args.end(), {"--max-threads", std::to_string(config_.maxThreads)});
+  if (config_.cudaDevice != -1)
+    args.insert(args.end(), {"--cuda-device", std::to_string(config_.cudaDevice)});
+
+  runStage("OpenMVS TextureMesh", std::move(args), logsDir_ / "texture_mesh.log");
+}
+
+// ── 子进程辅助 ───────────────────────────────────────────────────────────────
+
+void StreamingPipeline::runStage(const std::string& displayName,
+                                  std::vector<std::string> args,
+                                  const std::filesystem::path& logFile) {
+  const auto t0 = Clock::now();
+  std::cout << "[" << displayName << "]..." << std::flush;
+
+  std::filesystem::create_directories(logFile.parent_path());
+  const CommandResult result = runCommand(args, outputDir_, logFile);
+
   if (result.exitCode != 0) {
-    std::cerr << "[Densify] 失败 (exit " << result.exitCode << ")，日志: " << log << std::endl;
-    return false;
+    std::cout << " 失败 (exit " << result.exitCode << ")" << std::endl;
+    throw std::runtime_error(displayName + " failed; log: " + logFile.string());
   }
-  std::cout << "[Densify] 完成" << std::endl;
-  return true;
+  std::cout << " 完成 (" << fmtDur(elapsed(t0)) << ")" << std::endl;
 }
 
 } // namespace mvs

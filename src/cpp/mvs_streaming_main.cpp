@@ -1,69 +1,89 @@
-#include "pipeline/StreamingPipeline.h"
 #include "pipeline/Config.h"
+#include "pipeline/StreamingPipeline.h"
 
 #include <iostream>
-#include <string>
 
-void printUsage() {
-  std::cout << "用法: ./build/mvs_streaming [选项]" << std::endl;
-  std::cout << std::endl;
-  std::cout << "必选参数:" << std::endl;
-  std::cout << "  --config <file>        配置文件 (JSON)" << std::endl;
-  std::cout << "  --sparse <dir>         COLMAP sparse model 目录" << std::endl;
-  std::cout << "  --output <dir>         输出目录" << std::endl;
-  std::cout << std::endl;
-  std::cout << "示例:" << std::endl;
-  std::cout << "  ./build/mvs_streaming --config config.json --sparse colmap/sparse/0 --output outputs/streaming" << std::endl;
+void printUsage(const char* prog) {
+  std::cout << "用法: " << prog << " [选项]\n\n"
+            << "必选参数（完整流程）:\n"
+            << "  --config <file>        配置文件 (JSON)\n"
+            << "  --output <dir>         输出目录\n\n"
+            << "选项 (覆盖配置文件):\n"
+            << "  --images <dir>         输入图像目录\n"
+            << "  --cameras <file>       相机参数 JSON\n"
+            << "  --colmap <bin>         COLMAP 可执行路径\n"
+            << "  --openmvs-bin <dir>    OpenMVS 工具目录\n"
+            << "  --max-threads <N>      并行线程数 (0=自动)\n"
+            << "  --cuda-device <N>      GPU 设备号 (-1=自动)\n"
+            << "  --matcher <type>       exhaustive | sequential\n"
+            << "  --generate-texture <0|1>\n\n"
+            << "仅 buildScene+undistort+densify 模式:\n"
+            << "  --sparse <dir>         已有的 COLMAP sparse model 目录\n\n"
+            << "示例（完整流程，取代 mvs_reconstruct）:\n"
+            << "  " << prog << " --config config/reconstruction-fast.json --output outputs/run\n\n"
+            << "示例（仅替换 undistorter + InterfaceCOLMAP 部分）:\n"
+            << "  " << prog << " --config config.json --sparse colmap/sparse/0 --output outputs/run\n";
 }
 
 int main(int argc, char** argv) {
-  std::string config_file;
-  std::string sparse_dir;
-  std::string output_dir;
+  if (argc < 2) {
+    printUsage(argv[0]);
+    return 1;
+  }
 
-  // 解析参数
+  // 检查 --help
   for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i];
-    if (arg == "--config" && i + 1 < argc) {
-      config_file = argv[++i];
-    } else if (arg == "--sparse" && i + 1 < argc) {
-      sparse_dir = argv[++i];
-    } else if (arg == "--output" && i + 1 < argc) {
-      output_dir = argv[++i];
-    } else if (arg == "--help" || arg == "-h") {
-      printUsage();
+    std::string a = argv[i];
+    if (a == "--help" || a == "-h") {
+      printUsage(argv[0]);
       return 0;
     }
   }
 
-  if (config_file.empty() || sparse_dir.empty() || output_dir.empty()) {
-    std::cerr << "错误: 缺少必需参数" << std::endl;
-    std::cerr << std::endl;
-    printUsage();
-    return 1;
-  }
+  // 解析参数（复用 parseArgs，和 mvs_reconstruct 完全一致）
+  mvs::Config config = mvs::parseArgs(argc, argv);
 
-  std::cout << "=== MVS 流式重建管线 ===" << std::endl;
-  std::cout << "配置文件: " << config_file << std::endl;
-  std::cout << "Sparse model: " << sparse_dir << std::endl;
-  std::cout << "输出目录: " << output_dir << std::endl;
-  std::cout << std::endl;
-  std::cout << "原理: 直接写 OpenMVS 场景 + 多线程去畸变" << std::endl;
-  std::cout << "取代: COLMAP image_undistorter + OpenMVS InterfaceCOLMAP" << std::endl;
-  std::cout << std::endl;
+  // 判断模式：有 --sparse 就只跑 buildScene+undistort+densify
+  std::string sparse;
+  std::string output;
+  for (int i = 1; i + 1 < argc; ++i) {
+    std::string a = argv[i];
+    if (a == "--sparse")  sparse  = argv[i + 1];
+    if (a == "--output")  output  = argv[i + 1];
+  }
+  if (output.empty()) output = config.outputDir;
 
   try {
-    // 加载配置
-    mvs::Config config;
-    mvs::applyConfigFile(config, config_file);
+    if (!sparse.empty()) {
+      // ── 部分模式：从已有 sparse model 开始 ──────────────────────────────
+      std::cout << "=== 流式管线（部分模式：buildScene + undistort + densify） ===" << std::endl;
+      std::cout << "Sparse model : " << sparse  << std::endl;
+      std::cout << "输出目录     : " << output  << std::endl;
+      std::cout << std::endl;
 
-    // 运行流式管线
-    mvs::StreamingPipeline pipeline(config, sparse_dir, output_dir);
-    pipeline.run();
+      mvs::StreamingPipeline pipeline(config, sparse, output);
+      pipeline.run();
 
-    std::cout << std::endl;
-    std::cout << "=== 完成 ===" << std::endl;
-    std::cout << "产物: " << output_dir << "/openmvs/scene_dense.mvs" << std::endl;
+    } else {
+      // ── 完整模式：特征提取 → ... → 纹理模型 ────────────────────────────
+      std::cout << "=== 流式管线（完整模式，取代 mvs_reconstruct） ===" << std::endl;
+      std::cout << "图像目录     : " << config.imagesDir    << std::endl;
+      std::cout << "相机参数     : " << config.camerasJson  << std::endl;
+      std::cout << "输出目录     : " << output              << std::endl;
+      std::cout << std::endl;
+
+      // 确保 outputDir 已设置
+      if (config.outputDir.empty()) {
+        if (output.empty()) {
+          std::cerr << "错误: 请通过 --output 或配置文件中的 output 指定输出目录" << std::endl;
+          return 1;
+        }
+        config.outputDir = output;
+      }
+
+      mvs::StreamingPipeline pipeline(config, config.outputDir);
+      return pipeline.runFull();
+    }
 
     return 0;
   } catch (const std::exception& e) {
