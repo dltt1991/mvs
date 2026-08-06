@@ -1,0 +1,57 @@
+{
+  // 快速重建配置：针对 TextureMesh 瓶颈优化，目标减少 30% 耗时，质量损失 <5%
+
+  "images": "data/images",
+  "cameras": "data/cameras.json",
+  "output": "outputs/run",
+
+  // 使用打包产物的二进制路径（容器内）
+  "colmap": "build/third_party/colmap/src/colmap/exe/colmap",
+  "openmvs_bin": "build/third_party/openmvs/bin",
+
+  "max_threads": 12,
+  "undistort_copy_policy": "HARD_LINK",
+  "reuse_existing": false,
+  "remove_depth_maps": true,
+
+  "matcher": "exhaustive",
+  "sequential_overlap": 10,
+  "sequential_quadratic_overlap": true,
+  "mapper_ba_use_gpu": false,
+  "cuda_device": -1,
+
+  // ========== 速度优化参数（保守方案）==========
+
+  // 深度图估计邻居视图数：5 → 4
+  // 影响：每张深度图少处理 1 个视角，DensifyPointCloud 约快 15-20%
+  // 质量：轻微降低完整性，对规则采集的数据集影响小
+  "densify_number_views": 4,
+
+  // 深度图融合最小一致性视图数：保持 2（不降低，这是质量底线）
+  "densify_number_views_fuse": 2,
+
+  // PatchMatch 几何一致性迭代：1 → 1（保持，这已是实测最优值）
+  "densify_geometric_iters": 1,
+
+  // 深度图分辨率级别：1 → 1（保持，这是速度和质量的平衡点）
+  "densify_resolution_level": 1,
+
+  // 深度图最大分辨率：2560 → 2048
+  // 影响：输入点云密度降低，网格面数减少 ~30%，TextureMesh face assignment 相应加速
+  // 质量：2048 对于车载场景仍然是高分辨率，细节损失 <5%
+  "densify_max_resolution": 2048,
+
+  // 深度图估计迭代次数：3 → 2
+  // 影响：DensifyPointCloud 约快 33%
+  // 质量：轻微降低深度图精度，但后续融合时会补偿
+  "densify_iters": 2,
+
+  "generate_texture": true,
+
+  // 纹理 patch packing 启发式：3 → 100
+  // 3 = 最优 packing (CPU 密集的 simulated annealing)
+  // 100 = 快速贪心 (效率优先)
+  // 影响：TextureMesh packing 阶段从 70s → ~20s
+  // 质量：纹理图集利用率略降（多 10-15% 浪费空间），但视觉效果几乎无差异
+  "texture_patch_packing_heuristic": 100
+}

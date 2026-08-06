@@ -27,7 +27,7 @@
   // Maximum worker threads passed to COLMAP/OpenMVS.
   // Candidates: 0 = tool default/all available cores; 6 or 8 = leave CPU headroom for UI/IO on a 10-core machine.
   // CLI override: --max-threads
-  "max_threads": 0,
+  "max_threads": 12,
 
   // COLMAP image_undistorter copy policy for dense workspace images.
   // Candidates: "HARD_LINK" = lowest IO on same filesystem; "SOFT_LINK" = symbolic links; "COPY" = portable full copy.
@@ -67,6 +67,14 @@
   // For datasets with <50 images, enabling this has no effect as COLMAP falls back to CPU.
   // CLI override: --mapper-ba-use-gpu
   "mapper_ba_use_gpu": false,
+
+  // CUDA device used by OpenMVS DensifyPointCloud / ReconstructMesh / TextureMesh.
+  // Candidates: -1 = auto-select best GPU (OpenMVS default); 0, 1, 2... = explicit device index; -2 = force CPU.
+  // OpenMVS uses a single GPU per tool process, and pipeline stages run sequentially,
+  // so setting this does not parallelize a single run. Use it to pin concurrent runs
+  // to different GPUs, or to avoid a busy card.
+  // CLI override: --cuda-device
+  "cuda_device": -1,
 
   // Number of neighbor views used by OpenMVS for depth-map estimation.
   // Candidates: 5 = OpenMVS default; 4 = moderate speed experiment; 3 = aggressive speed experiment.

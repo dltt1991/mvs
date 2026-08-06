@@ -55,6 +55,14 @@ void appendOpenMvsThreads(std::vector<std::string>& args, int maxThreads) {
   }
 }
 
+// 只在非默认值时显式传递，保持默认命令行与 OpenMVS 原生行为一致
+// （-1 本身就是 OpenMVS 的默认值：自动选最佳 GPU）。
+void appendOpenMvsCudaDevice(std::vector<std::string>& args, int cudaDevice) {
+  if (cudaDevice != -1) {
+    appendOption(args, "--cuda-device", std::to_string(cudaDevice));
+  }
+}
+
 PipelineStage stage(const std::string& name,
                     const std::string& displayName,
                     std::vector<std::string> args,
@@ -379,6 +387,7 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
                                  "--iters",
                                  std::to_string(config.densifyIters)});
   appendOpenMvsThreads(densifyArgs, config.maxThreads);
+  appendOpenMvsCudaDevice(densifyArgs, config.cudaDevice);
   pushStage(plan,
             stage("densify_point_cloud",
                   "OpenMVS：DensifyPointCloud 生成稠密点云",
@@ -396,6 +405,7 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
                               "--output-file",
                               meshPly.filename().string()});
   appendOpenMvsThreads(meshArgs, config.maxThreads);
+  appendOpenMvsCudaDevice(meshArgs, config.cudaDevice);
   pushStage(plan,
             stage("reconstruct_mesh",
                   "OpenMVS：ReconstructMesh 生成三角网格",
@@ -418,6 +428,7 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
                                    "--patch-packing-heuristic",
                                    std::to_string(config.texturePatchPackingHeuristic)});
     appendOpenMvsThreads(textureArgs, config.maxThreads);
+    appendOpenMvsCudaDevice(textureArgs, config.cudaDevice);
     pushStage(plan,
               stage("texture_mesh",
                     "OpenMVS：TextureMesh 生成纹理模型",

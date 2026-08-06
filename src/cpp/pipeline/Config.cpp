@@ -60,6 +60,16 @@ int parseNonNegativeInt(const std::string& value, const std::string& optionName)
   return static_cast<int>(parsed);
 }
 
+// OpenMVS 的 --cuda-device 语义：-1 = 自动选最佳 GPU，-2 = 强制 CPU，>=0 = 设备号。
+int parseCudaDevice(const std::string& value, const std::string& optionName) {
+  char* end = nullptr;
+  const long parsed = std::strtol(value.c_str(), &end, 10);
+  if (end == value.c_str() || *end != '\0' || parsed < -2) {
+    throw std::invalid_argument("invalid CUDA device for " + optionName + " (expected >= -2): " + value);
+  }
+  return static_cast<int>(parsed);
+}
+
 std::string parseCopyPolicy(const std::string& value) {
   if (value == "COPY" || value == "SOFT_LINK" || value == "HARD_LINK") {
     return value;
@@ -109,6 +119,19 @@ void applyJsonInt(const nlohmann::json& json,
   target = json[key].get<int>();
 }
 
+// cuda_device 允许负值：-1 = 自动选最佳 GPU，-2 = 强制 CPU（OpenMVS 语义）。
+void applyJsonCudaDevice(const nlohmann::json& json,
+                         const std::string& key,
+                         int& target) {
+  if (!json.contains(key)) {
+    return;
+  }
+  if (!json[key].is_number_integer() || json[key].get<int>() < -2) {
+    throw std::invalid_argument("config field must be an integer >= -2: " + key);
+  }
+  target = json[key].get<int>();
+}
+
 void applyJsonBool(const nlohmann::json& json,
                    const std::string& key,
                    bool& target) {
@@ -145,6 +168,7 @@ void applyConfigFile(Config& config, const std::filesystem::path& path) {
   applyJsonInt(json, "sequential_overlap", config.sequentialOverlap);
   applyJsonBool(json, "sequential_quadratic_overlap", config.sequentialQuadraticOverlap);
   applyJsonBool(json, "mapper_ba_use_gpu", config.mapperBundleAdjustmentGpu);
+  applyJsonCudaDevice(json, "cuda_device", config.cudaDevice);
   applyJsonInt(json, "densify_number_views", config.densifyNumberViews);
   applyJsonInt(json, "densify_number_views_fuse", config.densifyNumberViewsFuse);
   applyJsonInt(json, "densify_geometric_iters", config.densifyGeometricIters);
@@ -228,6 +252,9 @@ Config parseArgs(int argc, char** argv) {
     config.mapperBundleAdjustmentGpu = parseBool(
         optionalOption(options, "--mapper-ba-use-gpu", "0"),
         "--mapper-ba-use-gpu");
+  }
+  if (hasOption(options, "--cuda-device")) {
+    config.cudaDevice = parseCudaDevice(optionalOption(options, "--cuda-device", "-1"), "--cuda-device");
   }
   if (hasOption(options, "--densify-number-views")) {
     config.densifyNumberViews =
