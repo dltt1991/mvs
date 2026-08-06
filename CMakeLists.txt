@@ -74,6 +74,16 @@ set_target_properties(mvs_pipeline_command_test PROPERTIES
 )
 add_test(NAME mvs_pipeline_command_test COMMAND mvs_pipeline_command_test)
 
+# 融合 undistorter + DensifyPointCloud 程序（实验性）
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/FusedDensify.cmake)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FusedDensify.cmake)
+endif()
+
+# 流式管线：完全重写去畸变 + OpenMVS 转换（方案3完整版）
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/StreamingPipeline.cmake)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/StreamingPipeline.cmake)
+endif()
+
 if(Python3_Interpreter_FOUND)
   add_test(
     NAME mvs_report_run_test

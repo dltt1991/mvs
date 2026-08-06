@@ -144,6 +144,8 @@ void applyJsonBool(const nlohmann::json& json,
   target = json[key].get<bool>();
 }
 
+}  // namespace (anonymous)
+
 void applyConfigFile(Config& config, const std::filesystem::path& path) {
   std::ifstream in(path);
   if (!in) {
@@ -169,6 +171,9 @@ void applyConfigFile(Config& config, const std::filesystem::path& path) {
   applyJsonBool(json, "sequential_quadratic_overlap", config.sequentialQuadraticOverlap);
   applyJsonBool(json, "mapper_ba_use_gpu", config.mapperBundleAdjustmentGpu);
   applyJsonCudaDevice(json, "cuda_device", config.cudaDevice);
+  applyJsonBool(json, "enable_batched_pipeline", config.enableBatchedPipeline);
+  applyJsonInt(json, "batch_size", config.batchSize);
+  applyJsonInt(json, "batch_overlap", config.batchOverlap);
   applyJsonInt(json, "densify_number_views", config.densifyNumberViews);
   applyJsonInt(json, "densify_number_views_fuse", config.densifyNumberViewsFuse);
   applyJsonInt(json, "densify_geometric_iters", config.densifyGeometricIters);
@@ -184,8 +189,6 @@ void requireConfigValue(const std::string& value, const std::string& name) {
     throw std::invalid_argument("missing required config value " + name);
   }
 }
-
-}  // namespace
 
 std::string Config::runName() const {
   const auto path = std::filesystem::path(outputDir);
@@ -255,6 +258,17 @@ Config parseArgs(int argc, char** argv) {
   }
   if (hasOption(options, "--cuda-device")) {
     config.cudaDevice = parseCudaDevice(optionalOption(options, "--cuda-device", "-1"), "--cuda-device");
+  }
+  if (hasOption(options, "--enable-batched-pipeline")) {
+    config.enableBatchedPipeline = parseBool(
+        optionalOption(options, "--enable-batched-pipeline", "0"),
+        "--enable-batched-pipeline");
+  }
+  if (hasOption(options, "--batch-size")) {
+    config.batchSize = parseNonNegativeInt(optionalOption(options, "--batch-size", "10"), "--batch-size");
+  }
+  if (hasOption(options, "--batch-overlap")) {
+    config.batchOverlap = parseNonNegativeInt(optionalOption(options, "--batch-overlap", "5"), "--batch-overlap");
   }
   if (hasOption(options, "--densify-number-views")) {
     config.densifyNumberViews =
