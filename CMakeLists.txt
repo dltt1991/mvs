@@ -12,18 +12,45 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Python3 COMPONENTS Interpreter)
 
+# StreamingPipeline 依赖：COLMAP 库（读 sparse model）+ OpenCV（去畸变）
+find_package(OpenCV REQUIRED COMPONENTS core imgcodecs imgproc calib3d)
+find_package(Eigen3 REQUIRED)
+
+set(COLMAP_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/build/third_party/colmap/src/colmap)
+
 add_library(mvs_core
   src/cpp/pipeline/Config.cpp
   src/cpp/pipeline/CameraConfig.cpp
   src/cpp/pipeline/Manifest.cpp
   src/cpp/pipeline/ProcessRunner.cpp
   src/cpp/pipeline/ReconstructionPipeline.cpp
+  src/cpp/pipeline/StreamingPipeline.cpp
 )
 
 target_include_directories(mvs_core
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/3rd
+    ${CMAKE_CURRENT_SOURCE_DIR}/3rd/colmap-4.1.1/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/build/third_party/colmap/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/3rd/openMVS-2.4.0/libs
+    ${OpenCV_INCLUDE_DIRS}
+)
+
+target_link_libraries(mvs_core
+  PUBLIC
+    ${OpenCV_LIBS}
+    Eigen3::Eigen
+    # COLMAP 库（只用于读取 sparse reconstruction）
+    ${COLMAP_LIB_DIR}/scene/libcolmap_scene.a
+    ${COLMAP_LIB_DIR}/scene/libcolmap_scene_types.a
+    ${COLMAP_LIB_DIR}/image/libcolmap_image.a
+    ${COLMAP_LIB_DIR}/sensor/libcolmap_sensor.a
+    ${COLMAP_LIB_DIR}/util/libcolmap_util.a
+    ${COLMAP_LIB_DIR}/geometry/libcolmap_geometry.a
+    ${COLMAP_LIB_DIR}/math/libcolmap_math.a
+    # 系统依赖（COLMAP 传递）
+    pthread curl crypto glog gflags OpenImageIO OpenImageIO_Util
 )
 
 add_executable(mvs_reconstruct
@@ -73,11 +100,6 @@ set_target_properties(mvs_pipeline_command_test PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests/cpp
 )
 add_test(NAME mvs_pipeline_command_test COMMAND mvs_pipeline_command_test)
-
-# 流式管线（取代 undistorter + InterfaceCOLMAP，进程内并行去畸变）
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/StreamingPipeline.cmake)
-  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/StreamingPipeline.cmake)
-endif()
 
 if(Python3_Interpreter_FOUND)
   add_test(

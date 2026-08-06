@@ -43,6 +43,11 @@ struct Config {
   // 每批 undistort 时会额外处理前后各 overlap 张图。
   // 默认 5（邻居视图搜索范围通常 < 5）。
   int batchOverlap = 5;
+  // 用进程内多线程实现取代 COLMAP image_undistorter + OpenMVS InterfaceCOLMAP。
+  // true（默认）：buildScene(56ms) + undistortParallel(12线程,4.7s) 取代串行74s。
+  // false：保留原有子进程调用，用于对比或排查问题。
+  bool useStreamingUndistort = true;
+
   int densifyNumberViews = 5;
   int densifyNumberViewsFuse = 2;
   int densifyGeometricIters = 2;

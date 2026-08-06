@@ -2,6 +2,7 @@
 
 #include "pipeline/Manifest.h"
 #include "pipeline/ProcessRunner.h"
+#include "pipeline/StreamingPipeline.h"
 
 #include <algorithm>
 #include <chrono>
@@ -464,6 +465,22 @@ int runPipeline(const Config& config) {
   std::filesystem::create_directories(plan.workspaceDir / "logs");
   writeSortedImageList(config.imagesDir, plan.imageListFile);
 
+  // Streaming undistort：在 stage 循环之前准备好路径，避免子进程 chdir 后相对路径失效
+  std::unique_ptr<StreamingPipeline> streamingPipeline;
+  if (config.useStreamingUndistort) {
+    const auto cwd = std::filesystem::current_path();
+    auto toAbs = [&](const std::string& p) -> std::string {
+      if (p.empty()) return p;
+      const auto fp = std::filesystem::path(p);
+      return fp.is_absolute() ? p : (cwd / fp).lexically_normal().string();
+    };
+    Config sc = config;
+    sc.imagesDir = toAbs(config.imagesDir);
+    const auto sparseModel = plan.workspaceDir / "colmap" / "sparse" / "0";
+    std::filesystem::create_directories(plan.workspaceDir / "images");
+    streamingPipeline = std::make_unique<StreamingPipeline>(sc, sparseModel, plan.workspaceDir);
+  }
+
   Manifest manifest;
   manifest.status = "running";
   manifest.failedStage = "";
@@ -498,6 +515,45 @@ int runPipeline(const Config& config) {
       ++step;
       continue;
     }
+
+    // ── Streaming undistort：取代 image_undistorter + interface_colmap ──────
+    if (config.useStreamingUndistort && pipelineStage.name == "image_undistorter") {
+      std::cout << "      [streaming] buildScene + undistortParallel（取代 image_undistorter）\n" << std::flush;
+      const auto t0 = std::chrono::steady_clock::now();
+      const auto jobs = streamingPipeline->buildScene();
+      const auto sceneT = elapsedSeconds(t0);
+      const auto t1 = std::chrono::steady_clock::now();
+      streamingPipeline->undistortParallel(jobs);
+      const auto totalT = elapsedSeconds(t0);
+      StageManifestEntry e;
+      e.name = pipelineStage.name;
+      e.displayName = pipelineStage.displayName;
+      e.durationSeconds = totalT;
+      e.logFile = pipelineStage.logFile.string();
+      e.status = "ok";
+      manifest.stages.push_back(e);
+      writeManifest(manifest, manifestPath);
+      std::cout << "      完成 (" << formatDuration(totalT) << ")"
+                << "  [buildScene:" << formatDuration(sceneT)
+                << " undistort:" << formatDuration(elapsedSeconds(t1)) << "]\n" << std::flush;
+      ++step;
+      continue;
+    }
+    if (config.useStreamingUndistort && pipelineStage.name == "interface_colmap") {
+      // scene.mvs 已由 buildScene() 写入，跳过
+      StageManifestEntry e;
+      e.name = pipelineStage.name;
+      e.displayName = pipelineStage.displayName;
+      e.durationSeconds = 0.0;
+      e.logFile = pipelineStage.logFile.string();
+      e.status = "skipped";
+      manifest.stages.push_back(e);
+      writeManifest(manifest, manifestPath);
+      std::cout << "      [streaming] scene.mvs 已由 buildScene 写入，跳过\n" << std::flush;
+      ++step;
+      continue;
+    }
+    // ── 原有子进程执行路径 ────────────────────────────────────────────────
 
     const auto stageStart = std::chrono::steady_clock::now();
     const auto result = runCommand(pipelineStage.args, plan.workspaceDir, pipelineStage.logFile);

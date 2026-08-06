@@ -45,17 +45,17 @@ public:
   // 仅替换 undistorter + InterfaceCOLMAP（从已有 sparse model 开始）
   void run();
 
+  // ── 公开供 runPipeline() 直接调用 ───────────────────────────────────────
+  // 读取 sparse model，构建 scene.mvs，返回去畸变任务列表
+  std::vector<UndistortJob> buildScene();
+  // 多线程去畸变，写入 outputDir_/images/
+  void undistortParallel(const std::vector<UndistortJob>& jobs);
+
 private:
   // ── COLMAP 阶段（子进程）────────────────────────────────────────────
   void stageFeatureExtractor(const CameraIntrinsics& camera);
   void stageMatcher();
   void stageMapper();
-
-  // ── 流式阶段（进程内）────────────────────────────────────────────────
-  // 直接读 COLMAP sparse model → 写 scene.mvs + 生成去畸变任务列表
-  std::vector<UndistortJob> buildScene();
-  // 多线程去畸变
-  void undistortParallel(const std::vector<UndistortJob>& jobs);
 
   // ── OpenMVS 阶段（子进程）──────────────────────────────────────────
   void stageDensify();

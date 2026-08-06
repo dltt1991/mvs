@@ -68,6 +68,12 @@
   // CLI override: --mapper-ba-use-gpu
   "mapper_ba_use_gpu": false,
 
+  // 用进程内多线程实现取代 COLMAP image_undistorter + OpenMVS InterfaceCOLMAP。
+  // true（默认）：buildScene(56ms) + undistortParallel(12线程,4.7s)，节省 ~70s。
+  // false：保留原有子进程调用，用于对比或排查问题。
+  // CLI override: --use-streaming-undistort
+  "use_streaming_undistort": true,
+
   // CUDA device used by OpenMVS DensifyPointCloud / ReconstructMesh / TextureMesh.
   // Candidates: -1 = auto-select best GPU (OpenMVS default); 0, 1, 2... = explicit device index; -2 = force CPU.
   // OpenMVS uses a single GPU per tool process, and pipeline stages run sequentially,

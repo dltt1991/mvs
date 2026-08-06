@@ -174,6 +174,7 @@ void applyConfigFile(Config& config, const std::filesystem::path& path) {
   applyJsonBool(json, "enable_batched_pipeline", config.enableBatchedPipeline);
   applyJsonInt(json, "batch_size", config.batchSize);
   applyJsonInt(json, "batch_overlap", config.batchOverlap);
+  applyJsonBool(json, "use_streaming_undistort", config.useStreamingUndistort);
   applyJsonInt(json, "densify_number_views", config.densifyNumberViews);
   applyJsonInt(json, "densify_number_views_fuse", config.densifyNumberViewsFuse);
   applyJsonInt(json, "densify_geometric_iters", config.densifyGeometricIters);
