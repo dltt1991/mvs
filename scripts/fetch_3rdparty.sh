@@ -22,6 +22,15 @@ FAISS_REPO="git@github.com:facebookresearch/faiss.git"
 FAISS_TAG="v1.14.1"
 FAISS_DIR="faiss"
 
+GLAD_DIR="glad"
+GLAD_PY_VERSION="2.0.8"
+IMGUI_REPO="git@github.com:ocornut/imgui.git"
+IMGUI_TAG="v1.91.9b"
+IMGUI_DIR="imgui"
+PORTABLE_FILE_DIALOGS_REPO="git@github.com:samhocevar/portable-file-dialogs.git"
+PORTABLE_FILE_DIALOGS_TAG="0.1.0"
+PORTABLE_FILE_DIALOGS_DIR="portable-file-dialogs"
+
 check_tag() {
   local repo="$1"
   local tag="$2"
@@ -113,6 +122,59 @@ prepare_poselib() {
   fi
 }
 
+prepare_glad() {
+  local path="${THIRD_DIR}/${GLAD_DIR}"
+  local venv="${ROOT_DIR}/build/viewer-deps-venv"
+
+  python3 -m venv "$venv"
+  "$venv/bin/python" -m pip install "glad2==${GLAD_PY_VERSION}"
+  mkdir -p "$path"
+  "$venv/bin/python" -m glad --api gl:core=4.3 --out-path "$path" c --loader
+  cat > "${path}/include/glad/glad.h" <<'EOF'
+#pragma once
+
+#include <glad/gl.h>
+EOF
+}
+
+prune_imgui() {
+  local path="${THIRD_DIR}/${IMGUI_DIR}"
+  [[ -d "$path" ]] || return
+
+  find "$path" -mindepth 1 -maxdepth 1 \
+    ! -name backends \
+    ! -name imgui.cpp \
+    ! -name imgui_draw.cpp \
+    ! -name imgui_tables.cpp \
+    ! -name imgui_widgets.cpp \
+    ! -name imgui.h \
+    ! -name imconfig.h \
+    ! -name imgui_internal.h \
+    ! -name imstb_rectpack.h \
+    ! -name imstb_textedit.h \
+    ! -name imstb_truetype.h \
+    ! -name LICENSE.txt \
+    -exec rm -rf {} +
+
+  find "$path/backends" -mindepth 1 -maxdepth 1 \
+    ! -name imgui_impl_glfw.cpp \
+    ! -name imgui_impl_glfw.h \
+    ! -name imgui_impl_opengl3.cpp \
+    ! -name imgui_impl_opengl3.h \
+    ! -name imgui_impl_opengl3_loader.h \
+    -exec rm -rf {} +
+}
+
+prune_portable_file_dialogs() {
+  local path="${THIRD_DIR}/${PORTABLE_FILE_DIALOGS_DIR}"
+  [[ -d "$path" ]] || return
+
+  find "$path" -mindepth 1 -maxdepth 1 \
+    ! -name portable-file-dialogs.h \
+    ! -name COPYING \
+    -exec rm -rf {} +
+}
+
 if [[ "${1:-}" == "--check-only" ]]; then
   check_tag "$COLMAP_REPO" "$COLMAP_TAG"
   echo "COLMAP tag ${COLMAP_TAG} is available"
@@ -120,6 +182,10 @@ if [[ "${1:-}" == "--check-only" ]]; then
   echo "OpenMVS tag ${OPENMVS_TAG} is available"
   check_tag "$FAISS_REPO" "$FAISS_TAG"
   echo "faiss tag ${FAISS_TAG} is available"
+  check_tag "$IMGUI_REPO" "$IMGUI_TAG"
+  echo "imgui tag ${IMGUI_TAG} is available"
+  check_tag "$PORTABLE_FILE_DIALOGS_REPO" "$PORTABLE_FILE_DIALOGS_TAG"
+  echo "portable-file-dialogs tag ${PORTABLE_FILE_DIALOGS_TAG} is available"
   exit 0
 fi
 
@@ -129,5 +195,10 @@ clone_or_update_branch "vcglib" "$VCG_REPO" "main"
 clone_or_update_commit "$POSELIB_DIR" "$POSELIB_REPO" "$POSELIB_COMMIT"
 prepare_poselib
 clone_or_update "$FAISS_DIR" "$FAISS_REPO" "$FAISS_TAG"
+prepare_glad
+clone_or_update "$IMGUI_DIR" "$IMGUI_REPO" "$IMGUI_TAG"
+prune_imgui
+clone_or_update "$PORTABLE_FILE_DIALOGS_DIR" "$PORTABLE_FILE_DIALOGS_REPO" "$PORTABLE_FILE_DIALOGS_TAG"
+prune_portable_file_dialogs
 
 echo "Third-party sources are ready in ${THIRD_DIR}"

@@ -15,6 +15,12 @@ find_package(Python3 COMPONENTS Interpreter)
 # StreamingPipeline 依赖：COLMAP 库（读 sparse model）+ OpenCV（去畸变）
 find_package(OpenCV REQUIRED COMPONENTS core imgcodecs imgproc calib3d)
 find_package(Eigen3 REQUIRED)
+find_package(Boost REQUIRED)
+find_package(glog CONFIG QUIET)
+find_package(gflags REQUIRED)
+find_package(Ceres REQUIRED)
+find_package(OpenSSL REQUIRED)
+find_package(OpenImageIO REQUIRED CONFIG)
 
 set(COLMAP_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/build/third_party/colmap/src/colmap)
 
@@ -35,12 +41,24 @@ target_include_directories(mvs_core
     ${CMAKE_CURRENT_SOURCE_DIR}/build/third_party/colmap/src
     ${CMAKE_CURRENT_SOURCE_DIR}/3rd/openMVS-2.4.0/libs
     ${OpenCV_INCLUDE_DIRS}
+    ${Boost_INCLUDE_DIRS}
+    ${CERES_INCLUDE_DIRS}
 )
+
+if(DEFINED glog_VERSION_MAJOR)
+  target_compile_definitions(mvs_core
+    PUBLIC
+      GLOG_VERSION_MAJOR=${glog_VERSION_MAJOR}
+      GLOG_VERSION_MINOR=${glog_VERSION_MINOR}
+  )
+endif()
 
 target_link_libraries(mvs_core
   PUBLIC
     ${OpenCV_LIBS}
     Eigen3::Eigen
+    Boost::headers
+    Ceres::ceres
     # COLMAP 库（只用于读取 sparse reconstruction）
     ${COLMAP_LIB_DIR}/scene/libcolmap_scene.a
     ${COLMAP_LIB_DIR}/scene/libcolmap_scene_types.a
@@ -50,7 +68,7 @@ target_link_libraries(mvs_core
     ${COLMAP_LIB_DIR}/geometry/libcolmap_geometry.a
     ${COLMAP_LIB_DIR}/math/libcolmap_math.a
     # 系统依赖（COLMAP 传递）
-    pthread curl crypto glog gflags OpenImageIO OpenImageIO_Util
+    pthread curl OpenSSL::Crypto glog::glog gflags OpenImageIO::OpenImageIO OpenImageIO::OpenImageIO_Util
 )
 
 add_executable(mvs_reconstruct
