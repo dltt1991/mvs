@@ -3,11 +3,14 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include <opencv2/imgcodecs.hpp>
 
 namespace mvs {
 namespace {
@@ -34,6 +37,46 @@ void validateCamera(const CameraIntrinsics& camera) {
   if (camera.f <= 0.0) {
     throw std::invalid_argument("camera focal length must be positive");
   }
+}
+
+bool isSupportedImageFile(const std::filesystem::path& path) {
+  auto ext = path.extension().string();
+  std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".tif" || ext == ".tiff";
+}
+
+bool readCenter(const nlohmann::json& item, CameraPoseReference* reference) {
+  if (item.contains("center")) {
+    const auto center = item.at("center").get<std::vector<double>>();
+    if (center.size() != 3) return false;
+    reference->x = center[0];
+    reference->y = center[1];
+    reference->z = center[2];
+    return true;
+  }
+
+  if (!item.contains("rotation") || !item.contains("translation")) {
+    return false;
+  }
+  const auto rotation = item.at("rotation").get<std::vector<std::vector<double>>>();
+  const auto translation = item.at("translation").get<std::vector<double>>();
+  if (rotation.size() != 3 || translation.size() != 3) return false;
+  for (const auto& row : rotation) {
+    if (row.size() != 3) return false;
+  }
+
+  reference->x = -(rotation[0][0] * translation[0] +
+                   rotation[1][0] * translation[1] +
+                   rotation[2][0] * translation[2]);
+  reference->y = -(rotation[0][1] * translation[0] +
+                   rotation[1][1] * translation[1] +
+                   rotation[2][1] * translation[2]);
+  reference->z = -(rotation[0][2] * translation[0] +
+                   rotation[1][2] * translation[1] +
+                   rotation[2][2] * translation[2]);
+  return true;
 }
 
 }  // namespace
@@ -83,6 +126,19 @@ CameraDataset loadCameraDataset(const std::filesystem::path& path) {
     throw std::invalid_argument("num_cameras does not match cameras array size");
   }
 
+  if (json.contains("images") && json.at("images").is_array()) {
+    for (const auto& item : json.at("images")) {
+      if (!item.value("registered", true) || !item.contains("name")) {
+        continue;
+      }
+      CameraPoseReference reference;
+      reference.name = item.at("name").get<std::string>();
+      if (!reference.name.empty() && readCenter(item, &reference)) {
+        dataset.poseReferences.push_back(reference);
+      }
+    }
+  }
+
   return dataset;
 }
 
@@ -122,6 +178,56 @@ CameraIntrinsics medianSimpleRadialCamera(const CameraDataset& dataset) {
   camera.cx = median(cx);
   camera.cy = median(cy);
   camera.k1 = median(k1);
+  return camera;
+}
+
+CameraIntrinsics estimateSimpleRadialCameraFromImages(const std::filesystem::path& imagesDir) {
+  std::error_code error;
+  if (!std::filesystem::exists(imagesDir, error) || !std::filesystem::is_directory(imagesDir, error)) {
+    throw std::invalid_argument("cannot read image directory for camera fallback: " + imagesDir.string());
+  }
+
+  std::vector<std::filesystem::path> imagePaths;
+  for (const auto& entry : std::filesystem::directory_iterator(imagesDir, error)) {
+    if (entry.is_regular_file(error) && isSupportedImageFile(entry.path())) {
+      imagePaths.push_back(entry.path());
+    }
+  }
+  if (error) {
+    throw std::invalid_argument("cannot list image directory for camera fallback: " + imagesDir.string());
+  }
+  if (imagePaths.empty()) {
+    throw std::invalid_argument("no supported images found for camera fallback: " + imagesDir.string());
+  }
+  std::sort(imagePaths.begin(), imagePaths.end());
+
+  int width = 0;
+  int height = 0;
+  for (const auto& imagePath : imagePaths) {
+    const auto image = cv::imread(imagePath.string(), cv::IMREAD_COLOR);
+    if (image.empty()) {
+      throw std::invalid_argument("cannot read image for camera fallback: " + imagePath.string());
+    }
+    if (width == 0 && height == 0) {
+      width = image.cols;
+      height = image.rows;
+      continue;
+    }
+    if (image.cols != width || image.rows != height) {
+      throw std::invalid_argument("all images must use the same dimensions for camera fallback");
+    }
+  }
+
+  CameraIntrinsics camera;
+  camera.id = 1;
+  camera.model = "SIMPLE_RADIAL";
+  camera.width = width;
+  camera.height = height;
+  camera.f = 1.2 * static_cast<double>(std::max(width, height));
+  camera.cx = static_cast<double>(width) / 2.0;
+  camera.cy = static_cast<double>(height) / 2.0;
+  camera.k1 = 0.0;
+  validateCamera(camera);
   return camera;
 }
 

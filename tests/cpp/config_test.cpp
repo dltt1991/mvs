@@ -95,6 +95,15 @@ int main() {
   assert(defaultConfig.textureGlobalSeamLeveling == false);
   assert(defaultConfig.textureLocalSeamLeveling == false);
 
+  const char* noCamerasArgv[] = {
+      "mvs_reconstruct",
+      "--images", "data/images",
+      "--output", "outputs/no-cameras",
+      "--colmap", "colmap",
+      "--openmvs-bin", "openmvs/bin"};
+  auto noCamerasConfig = mvs::parseArgs(9, const_cast<char**>(noCamerasArgv));
+  assert(noCamerasConfig.camerasJson.empty());
+
   const auto configPath = std::filesystem::temp_directory_path() / "mvs_config_file_test.json";
   {
     std::ofstream out(configPath);

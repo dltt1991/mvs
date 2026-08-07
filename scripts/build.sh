@@ -474,6 +474,7 @@ package_artifacts() {
   require_file "${BUILD_DIR}/mvs_reconstruct" "project binary"
   require_file "${THIRD_BUILD_DIR}/colmap/src/colmap/exe/colmap" "COLMAP binary"
   require_file "${ROOT_DIR}/scripts/reconstruct.sh" "reconstruct script"
+  require_file "${ROOT_DIR}/scripts/extract_video_frames.py" "video frame extraction script"
   require_file "${ROOT_DIR}/scripts/run_python_ui.py" "Python UI script"
   require_file "${ROOT_DIR}/scripts/report_run.py" "run report script"
   require_file "${ROOT_DIR}/config/reconstruction.json" "reconstruction config"
@@ -492,6 +493,7 @@ package_artifacts() {
   done
 
   cp "${ROOT_DIR}/scripts/reconstruct.sh" "${PACKAGE_DIR}/scripts/reconstruct.sh"
+  cp "${ROOT_DIR}/scripts/extract_video_frames.py" "${PACKAGE_DIR}/scripts/extract_video_frames.py"
   cp "${ROOT_DIR}/scripts/run_python_ui.py" "${PACKAGE_DIR}/scripts/run_python_ui.py"
   cp "${ROOT_DIR}/scripts/report_run.py" "${PACKAGE_DIR}/scripts/report_run.py"
   write_packaged_reconstruction_config \
@@ -508,7 +510,7 @@ package_artifacts() {
   fi
 
   clean_package_metadata
-  chmod +x "${PACKAGE_DIR}/bin/"* "${PACKAGE_DIR}/scripts/reconstruct.sh" "${PACKAGE_DIR}/scripts/run_python_ui.py" "${PACKAGE_DIR}/scripts/report_run.py"
+  chmod +x "${PACKAGE_DIR}/bin/"* "${PACKAGE_DIR}/scripts/reconstruct.sh" "${PACKAGE_DIR}/scripts/extract_video_frames.py" "${PACKAGE_DIR}/scripts/run_python_ui.py" "${PACKAGE_DIR}/scripts/report_run.py"
 
   cat > "${PACKAGE_DIR}/manifest.json" <<EOF
 {

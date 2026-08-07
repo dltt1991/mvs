@@ -17,14 +17,23 @@ struct CameraIntrinsics {
   double k1 = 0.0;
 };
 
+struct CameraPoseReference {
+  std::string name;
+  double x = 0.0;
+  double y = 0.0;
+  double z = 0.0;
+};
+
 struct CameraDataset {
   int numCameras = 0;
   int numImages = 0;
   int numRegistered = 0;
   std::vector<CameraIntrinsics> cameras;
+  std::vector<CameraPoseReference> poseReferences;
 };
 
 CameraDataset loadCameraDataset(const std::filesystem::path& path);
 CameraIntrinsics medianSimpleRadialCamera(const CameraDataset& dataset);
+CameraIntrinsics estimateSimpleRadialCameraFromImages(const std::filesystem::path& imagesDir);
 
 }  // namespace mvs

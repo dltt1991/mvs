@@ -1,6 +1,10 @@
 #include "pipeline/Config.h"
 #include "pipeline/ReconstructionPipeline.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
 #include <cassert>
 #include <algorithm>
 #include <filesystem>
@@ -44,7 +48,7 @@ int main() {
   camera.k1 = 0.01;
 
   auto plan = mvs::buildPipelinePlan(config, camera);
-  assert(plan.stages.size() == 8);
+  assert(plan.stages.size() == 9);
   assert(plan.imageListFile == std::filesystem::path("outputs/test-run/colmap/image_list.txt"));
   assert(plan.stages[0].name == "feature_extractor");
   assert(!plan.stages[0].signature.empty());
@@ -70,50 +74,56 @@ int main() {
   assert(plan.stages[2].argsContains("--Mapper.num_threads"));
   assert(plan.stages[2].argsContains("--Mapper.image_list_path"));
   assert(plan.stages[2].argsContains("outputs/test-run/colmap/image_list.txt"));
-  assert(plan.stages[3].argsContains("--num_threads"));
-  assert(plan.stages[3].argsContains("--copy_policy"));
-  assert(plan.stages[3].argsContains("HARD_LINK"));
-  assert(plan.stages[4].name == "interface_colmap");
-  assert(plan.stages[4].displayName == "OpenMVS：InterfaceCOLMAP 转换为 scene.mvs");
-  assert(plan.stages[4].argsContains("--max-threads"));
+  assert(plan.stages[3].name == "scale_restore");
+  assert(plan.stages[3].displayName == "COLMAP：按 cameras.json 外参恢复尺度");
+  assert(plan.stages[3].expectedArtifacts[0] == std::filesystem::path("outputs/test-run/colmap/sparse_scaled"));
+  assert(plan.stages[4].argsContains("--num_threads"));
+  assert(plan.stages[4].argsContains("--copy_policy"));
+  assert(plan.stages[4].argsContains("HARD_LINK"));
+  assert(optionValue(plan.stages[4], "--input_path") == "outputs/test-run/colmap/sparse_scaled");
+  assert(plan.stages[5].name == "interface_colmap");
+  assert(plan.stages[5].displayName == "OpenMVS：InterfaceCOLMAP 转换为 scene.mvs");
+  assert(optionValue(plan.stages[5], "--input-file") == "outputs/test-run/colmap/dense");
   assert(plan.stages[5].argsContains("--max-threads"));
-  assert(plan.stages[5].argsContains("--remove-dmaps"));
-  assert(plan.stages[5].argsContains("1"));
-  assert(plan.stages[5].argsContains("--number-views"));
-  assert(plan.stages[5].argsContains("4"));
-  assert(plan.stages[5].argsContains("--number-views-fuse"));
-  assert(plan.stages[5].argsContains("3"));
-  assert(plan.stages[5].argsContains("--geometric-iters"));
-  assert(plan.stages[5].argsContains("--resolution-level"));
-  assert(plan.stages[5].argsContains("2"));
-  assert(plan.stages[5].argsContains("--max-resolution"));
-  assert(plan.stages[5].argsContains("2048"));
-  assert(plan.stages[5].argsContains("--iters"));
-  assert(plan.stages[5].expectedArtifacts.size() == 2);
-  assert(plan.stages[5].expectedArtifacts[0] == std::filesystem::path("outputs/test-run/openmvs/scene_dense.mvs"));
-  assert(plan.stages[5].expectedArtifacts[1] == std::filesystem::path("outputs/test-run/openmvs/scene_dense.ply"));
+  assert(plan.stages[6].argsContains("--max-threads"));
+  assert(plan.stages[6].argsContains("--remove-dmaps"));
+  assert(plan.stages[6].argsContains("1"));
+  assert(plan.stages[6].argsContains("--number-views"));
+  assert(plan.stages[6].argsContains("4"));
+  assert(plan.stages[6].argsContains("--number-views-fuse"));
+  assert(plan.stages[6].argsContains("3"));
+  assert(plan.stages[6].argsContains("--geometric-iters"));
+  assert(plan.stages[6].argsContains("--resolution-level"));
+  assert(plan.stages[6].argsContains("2"));
+  assert(plan.stages[6].argsContains("--max-resolution"));
+  assert(plan.stages[6].argsContains("2048"));
+  assert(plan.stages[6].argsContains("--iters"));
+  assert(plan.stages[6].expectedArtifacts.size() == 2);
+  assert(plan.stages[6].expectedArtifacts[0] == std::filesystem::path("outputs/test-run/openmvs/scene_dense.mvs"));
+  assert(plan.stages[6].expectedArtifacts[1] == std::filesystem::path("outputs/test-run/openmvs/scene_dense.ply"));
   assert(plan.stages[6].argsContains("--max-threads"));
   assert(plan.stages[7].argsContains("--max-threads"));
-  assert(plan.stages[7].name == "texture_mesh");
-  assert(plan.stages[7].displayName == "OpenMVS：TextureMesh 生成纹理模型");
+  assert(plan.stages[8].argsContains("--max-threads"));
+  assert(plan.stages[8].name == "texture_mesh");
+  assert(plan.stages[8].displayName == "OpenMVS：TextureMesh 生成纹理模型");
 
   // interface 模式（--archive-type 默认 -1）下 ReconstructMesh 不写 .mvs，只写 .ply，
   // 所以 TextureMesh 必须吃 scene_dense.mvs 并用 --mesh-file 显式指定网格。
-  assert(plan.stages[6].name == "reconstruct_mesh");
-  assert(plan.stages[6].argsContains("scene_mesh.ply"));
-  assert(plan.stages[7].args[1] == "outputs/test-run/openmvs/scene_dense.mvs");
-  assert(plan.stages[7].argsContains("--mesh-file"));
+  assert(plan.stages[7].name == "reconstruct_mesh");
   assert(plan.stages[7].argsContains("scene_mesh.ply"));
-  assert(plan.stages[7].argsContains("scene_texture.ply"));
-  assert(plan.stages[7].argsContains("--patch-packing-heuristic"));
-  assert(plan.stages[7].argsContains("100"));
-  assert(optionValue(plan.stages[7], "--global-seam-leveling") == "0");
-  assert(optionValue(plan.stages[7], "--local-seam-leveling") == "0");
+  assert(plan.stages[8].args[1] == "outputs/test-run/openmvs/scene_dense.mvs");
+  assert(plan.stages[8].argsContains("--mesh-file"));
+  assert(plan.stages[8].argsContains("scene_mesh.ply"));
+  assert(plan.stages[8].argsContains("scene_texture.ply"));
+  assert(plan.stages[8].argsContains("--patch-packing-heuristic"));
+  assert(plan.stages[8].argsContains("100"));
+  assert(optionValue(plan.stages[8], "--global-seam-leveling") == "0");
+  assert(optionValue(plan.stages[8], "--local-seam-leveling") == "0");
 
   config.generateTexture = false;
   auto meshOnlyPlan = mvs::buildPipelinePlan(config, camera);
-  assert(meshOnlyPlan.stages.size() == 7);
-  assert(meshOnlyPlan.stages[6].name == "reconstruct_mesh");
+  assert(meshOnlyPlan.stages.size() == 8);
+  assert(meshOnlyPlan.stages[7].name == "reconstruct_mesh");
 
   const auto dir = std::filesystem::temp_directory_path() / "mvs_stage_ready_test";
   std::filesystem::remove_all(dir);

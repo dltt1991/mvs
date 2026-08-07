@@ -392,7 +392,6 @@ Config parseArgs(int argc, char** argv) {
   }
 
   requireConfigValue(config.imagesDir, "images");
-  requireConfigValue(config.camerasJson, "cameras");
   requireConfigValue(config.outputDir, "output");
   requireConfigValue(config.colmapBinary, "colmap");
   requireConfigValue(config.openMvsBinDir, "openmvs_bin");

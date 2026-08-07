@@ -133,11 +133,14 @@ def main() -> int:
         root.parent.parent / "data" if (root / "bin" / "mvs_reconstruct").is_file() else root / "data"
     )
     cameras = Path(args.cameras).resolve() if args.cameras else data_root / "cameras.json"
-    summary = load_camera_summary(cameras)
-    print(
-        f"camera: {summary.num_images} images, "
-        f"{summary.model}, {summary.width}x{summary.height}"
-    )
+    if cameras.is_file():
+        summary = load_camera_summary(cameras)
+        print(
+            f"camera: {summary.num_images} images, "
+            f"{summary.model}, {summary.width}x{summary.height}"
+        )
+    else:
+        print(f"camera: {cameras} not found, C++ fallback will estimate SIMPLE_RADIAL")
     command = build_command(args)
     return subprocess.call(command)
 

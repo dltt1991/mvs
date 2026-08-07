@@ -4,17 +4,20 @@
 #include "pipeline/OpenCvUndistorter.h"
 #include "pipeline/ProcessRunner.h"
 
+#include <colmap/scene/reconstruction.h>
+
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <cctype>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -108,7 +111,9 @@ std::string fileStamp(const std::filesystem::path& path) {
 
 std::string inputFingerprint(const Config& config) {
   std::vector<std::string> stamps;
-  stamps.push_back(fileStamp(config.camerasJson));
+  if (!config.camerasJson.empty()) {
+    stamps.push_back(fileStamp(config.camerasJson));
+  }
 
   std::error_code error;
   if (std::filesystem::exists(config.imagesDir, error)) {
@@ -127,6 +132,11 @@ std::string inputFingerprint(const Config& config) {
     out << stamp << "\n";
   }
   return out.str();
+}
+
+bool regularFileExists(const std::filesystem::path& path) {
+  std::error_code error;
+  return !path.empty() && std::filesystem::is_regular_file(path, error);
 }
 
 bool artifactExists(const std::filesystem::path& artifact) {
@@ -174,6 +184,68 @@ void writeStageLog(const std::filesystem::path& logFile, const std::string& cont
     throw std::runtime_error("cannot write stage log: " + logFile.string());
   }
   log << content;
+}
+
+void appendStageLog(const std::filesystem::path& logFile, const std::string& content) {
+  std::ofstream log(logFile, std::ios::app);
+  if (!log) {
+    throw std::runtime_error("cannot append stage log: " + logFile.string());
+  }
+  log << content;
+}
+
+void copySparseModel(const std::filesystem::path& input, const std::filesystem::path& output) {
+  std::error_code error;
+  std::filesystem::remove_all(output, error);
+  if (error) {
+    throw std::runtime_error("cannot clear sparse scale output: " + output.string());
+  }
+  std::filesystem::create_directories(output.parent_path());
+  std::filesystem::copy(input,
+                        output,
+                        std::filesystem::copy_options::recursive |
+                            std::filesystem::copy_options::overwrite_existing,
+                        error);
+  if (error) {
+    throw std::runtime_error("cannot copy sparse model for scale restore fallback: " + error.message());
+  }
+}
+
+std::size_t writeScaleReferenceFile(const CameraDataset& dataset,
+                                    const std::filesystem::path& sparseModel,
+                                    const std::filesystem::path& referenceFile) {
+  std::unordered_map<std::string, CameraPoseReference> references;
+  references.reserve(dataset.poseReferences.size());
+  for (const auto& reference : dataset.poseReferences) {
+    references.emplace(reference.name, reference);
+  }
+
+  colmap::Reconstruction reconstruction;
+  reconstruction.Read(sparseModel.string());
+  auto imageIds = reconstruction.RegImageIds();
+  std::sort(imageIds.begin(), imageIds.end());
+
+  std::filesystem::create_directories(referenceFile.parent_path());
+  std::ofstream out(referenceFile, std::ios::trunc);
+  if (!out) {
+    throw std::runtime_error("cannot write scale reference file: " + referenceFile.string());
+  }
+
+  std::size_t common = 0;
+  for (const auto imageId : imageIds) {
+    const auto& image = reconstruction.Image(imageId);
+    const auto it = references.find(image.Name());
+    if (it == references.end()) {
+      continue;
+    }
+    const auto& reference = it->second;
+    out << reference.name << " "
+        << number(reference.x) << " "
+        << number(reference.y) << " "
+        << number(reference.z) << "\n";
+    ++common;
+  }
+  return common;
 }
 
 void pushStage(PipelinePlan& plan,
@@ -250,6 +322,7 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
   PipelinePlan plan;
   plan.outputDir = config.outputDir;
   plan.workspaceDir = std::filesystem::path(config.outputDir);
+  const auto imagesDir = std::filesystem::absolute(config.imagesDir).lexically_normal();
 
   const auto colmapDir = plan.workspaceDir / "colmap";
   const auto openMvsDir = plan.workspaceDir / "openmvs";
@@ -259,6 +332,7 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
   const auto sparseDir = colmapDir / "sparse";
   const auto denseDir = colmapDir / "dense";
   const auto sparseModel = sparseDir / "0";
+  const auto scaledSparseModel = colmapDir / "sparse_scaled";
   const auto scene = openMvsDir / "scene.mvs";
   const auto denseScene = openMvsDir / "scene_dense.mvs";
   const auto densePly = openMvsDir / "scene_dense.ply";
@@ -278,7 +352,7 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
                                        "--database_path",
                                        database.string(),
                                        "--image_path",
-                                       config.imagesDir,
+                                       imagesDir.string(),
                                        "--image_list_path",
                                        plan.imageListFile.string(),
                                        "--ImageReader.single_camera",
@@ -327,7 +401,7 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
                                       "--database_path",
                                       database.string(),
                                       "--image_path",
-                                      config.imagesDir,
+                                      imagesDir.string(),
                                       "--Mapper.image_list_path",
                                       plan.imageListFile.string(),
                                       "--output_path",
@@ -347,12 +421,22 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
                   logsDir),
             dependencySignature);
 
+  pushStage(plan,
+            stage("scale_restore",
+                  "COLMAP：按 cameras.json 外参恢复尺度",
+                  {config.colmapBinary, "model_aligner"},
+                  {scaledSparseModel},
+                  inputStamp,
+                  dependencySignature,
+                  logsDir),
+            dependencySignature);
+
   std::vector<std::string> undistorterArgs{config.colmapBinary,
                                            "image_undistorter",
                                            "--image_path",
-                                           config.imagesDir,
+                                           imagesDir.string(),
                                            "--input_path",
-                                           sparseModel.string(),
+                                           scaledSparseModel.string(),
                                            "--output_path",
                                            denseDir.string(),
                                            "--output_type",
@@ -469,16 +553,30 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
 
 int runPipeline(const Config& config) {
   const auto runStart = std::chrono::steady_clock::now();
-  const int totalSteps = config.generateTexture ? 11 : 10;
+  const int totalSteps = config.generateTexture ? 12 : 11;
   std::cout << "== 多视角三维重建开始 ==\n";
   std::cout << "[1/" << totalSteps << "] 多张输入图片: " << config.imagesDir << "\n" << std::flush;
   std::cout << "[2/" << totalSteps << "] 读取相机参数: " << config.camerasJson << std::flush;
   const auto cameraStart = std::chrono::steady_clock::now();
-  const auto dataset = loadCameraDataset(config.camerasJson);
-  const auto camera = medianSimpleRadialCamera(dataset);
-  std::cout << " 完成 (" << formatDuration(elapsedSeconds(cameraStart)) << ")"
-            << "，图片数: " << dataset.numImages
-            << "，已注册: " << dataset.numRegistered << "\n" << std::flush;
+  CameraIntrinsics camera;
+  CameraDataset cameraDataset;
+  bool hasCameraDataset = false;
+  if (regularFileExists(config.camerasJson)) {
+    cameraDataset = loadCameraDataset(config.camerasJson);
+    hasCameraDataset = true;
+    camera = medianSimpleRadialCamera(cameraDataset);
+    std::cout << " 完成 (" << formatDuration(elapsedSeconds(cameraStart)) << ")"
+              << "，图片数: " << cameraDataset.numImages
+              << "，已注册: " << cameraDataset.numRegistered
+              << "，可用外参: " << cameraDataset.poseReferences.size() << "\n" << std::flush;
+  } else {
+    camera = estimateSimpleRadialCameraFromImages(config.imagesDir);
+    std::cout << " 不存在，使用图片尺寸估算 (" << formatDuration(elapsedSeconds(cameraStart)) << ")"
+              << "，模型: " << camera.model
+              << "，尺寸: " << camera.width << "x" << camera.height
+              << "，参数: " << camera.f << "," << camera.cx << "," << camera.cy << "," << camera.k1
+              << "\n" << std::flush;
+  }
 
   const auto plan = buildPipelinePlan(config, camera);
 
@@ -500,7 +598,7 @@ int runPipeline(const Config& config) {
       return p.is_absolute() ? p : (cwd / p).lexically_normal();
     };
     openCvImagesDir = toAbs(config.imagesDir);
-    openCvSparseModel = toAbs(plan.workspaceDir / "colmap" / "sparse" / "0");
+    openCvSparseModel = toAbs(plan.workspaceDir / "colmap" / "sparse_scaled");
     openCvDenseDir = toAbs(plan.workspaceDir / "colmap" / "dense");
   }
 
@@ -509,7 +607,8 @@ int runPipeline(const Config& config) {
   manifest.failedStage = "";
   manifest.artifacts["colmap_database"] = (plan.workspaceDir / "colmap" / "database.db").string();
   manifest.artifacts["colmap_image_list"] = plan.imageListFile.string();
-  manifest.artifacts["colmap_sparse"] = (plan.workspaceDir / "colmap" / "sparse" / "0").string();
+  manifest.artifacts["colmap_sparse_raw"] = (plan.workspaceDir / "colmap" / "sparse" / "0").string();
+  manifest.artifacts["colmap_sparse"] = (plan.workspaceDir / "colmap" / "sparse_scaled").string();
   manifest.artifacts["colmap_dense"] = (plan.workspaceDir / "colmap" / "dense").string();
   manifest.artifacts["openmvs_scene"] = (plan.workspaceDir / "openmvs" / "scene.mvs").string();
   manifest.artifacts["openmvs_dense"] = (plan.workspaceDir / "openmvs" / "scene_dense.mvs").string();
@@ -535,6 +634,114 @@ int runPipeline(const Config& config) {
       manifest.stages.push_back(stageEntry);
       writeManifest(manifest, manifestPath);
       std::cout << "      复用已有产物，跳过\n" << std::flush;
+      ++step;
+      continue;
+    }
+
+    if (pipelineStage.name == "scale_restore") {
+      const auto stageStart = std::chrono::steady_clock::now();
+      const auto rawSparseModel = plan.workspaceDir / "colmap" / "sparse" / "0";
+      const auto scaledSparseModel = plan.workspaceDir / "colmap" / "sparse_scaled";
+      const auto referenceFile = plan.workspaceDir / "colmap" / "reference_images.txt";
+
+      StageManifestEntry stageEntry;
+      stageEntry.name = pipelineStage.name;
+      stageEntry.displayName = pipelineStage.displayName;
+      stageEntry.logFile = pipelineStage.logFile.string();
+      std::string completionDetail = "跳过尺度恢复";
+
+      try {
+        if (!hasCameraDataset) {
+          copySparseModel(rawSparseModel, scaledSparseModel);
+          writeStageLog(pipelineStage.logFile,
+                        "status: skipped\nreason: cameras.json 不存在，跳过尺度恢复\n"
+                        "output: " + scaledSparseModel.string() + "\n");
+        } else if (cameraDataset.poseReferences.size() < 3) {
+          copySparseModel(rawSparseModel, scaledSparseModel);
+          writeStageLog(pipelineStage.logFile,
+                        "status: skipped\nreason: cameras.json 外参不足，至少需要 3 张，当前可用 " +
+                            std::to_string(cameraDataset.poseReferences.size()) + " 张\noutput: " +
+                            scaledSparseModel.string() + "\n");
+        } else {
+          const auto common = writeScaleReferenceFile(cameraDataset, rawSparseModel, referenceFile);
+          if (common < 3) {
+            copySparseModel(rawSparseModel, scaledSparseModel);
+            writeStageLog(pipelineStage.logFile,
+                          "status: skipped\nreason: 外参与 COLMAP 注册图同名匹配不足，至少需要 3 张，当前 " +
+                              std::to_string(common) + " 张\nreference_file: " +
+                              referenceFile.string() + "\noutput: " + scaledSparseModel.string() + "\n");
+          } else {
+            std::error_code error;
+            std::filesystem::remove_all(scaledSparseModel, error);
+            std::vector<std::string> alignArgs{config.colmapBinary,
+                                               "model_aligner",
+                                               "--input_path",
+                                               rawSparseModel.string(),
+                                               "--output_path",
+                                               scaledSparseModel.string(),
+                                               "--ref_images_path",
+                                               referenceFile.string(),
+                                               "--ref_is_gps",
+                                               "0",
+                                               "--alignment_type",
+                                               "custom",
+                                               "--min_common_images",
+                                               "3",
+                                               "--alignment_max_error",
+                                               "1000000"};
+            const auto result = runCommand(alignArgs, plan.workspaceDir, pipelineStage.logFile);
+            stageEntry.peakResidentSetSizeKb = result.peakResidentSetSizeKb;
+            stageEntry.userCpuSeconds = result.userCpuSeconds;
+            stageEntry.systemCpuSeconds = result.systemCpuSeconds;
+            if (result.exitCode != 0) {
+              stageEntry.status = "failed";
+              stageEntry.durationSeconds = elapsedSeconds(stageStart);
+              manifest.stages.push_back(stageEntry);
+              manifest.status = "failed";
+              manifest.failedStage = pipelineStage.name;
+              writeManifest(manifest, manifestPath);
+              std::cout << "      失败 (" << formatDuration(stageEntry.durationSeconds)
+                        << ")，exit code: " << result.exitCode << "\n";
+              std::cout << "      请查看日志: " << pipelineStage.logFile.string() << "\n" << std::flush;
+              return result.exitCode;
+            }
+            appendStageLog(pipelineStage.logFile,
+                           "scale_restore_status: aligned\ncommon_images: " +
+                               std::to_string(common) + "\nreference_file: " +
+                               referenceFile.string() + "\n");
+            completionDetail = "已恢复外参尺度";
+          }
+        }
+
+        for (const auto& artifact : pipelineStage.expectedArtifacts) {
+          if (!artifactExists(artifact)) {
+            throw std::runtime_error("缺少产物: " + artifact.string());
+          }
+        }
+        writeStageMarker(pipelineStage);
+        stageEntry.status = "ok";
+        stageEntry.durationSeconds = elapsedSeconds(stageStart);
+        manifest.stages.push_back(stageEntry);
+        writeManifest(manifest, manifestPath);
+        std::cout << "      完成 (" << formatDuration(stageEntry.durationSeconds) << ")，"
+                  << completionDetail << "\n" << std::flush;
+      } catch (const std::exception& error) {
+        stageEntry.status = "failed";
+        stageEntry.durationSeconds = elapsedSeconds(stageStart);
+        manifest.stages.push_back(stageEntry);
+        manifest.status = "failed";
+        manifest.failedStage = pipelineStage.name;
+        writeManifest(manifest, manifestPath);
+        if (artifactExists(pipelineStage.logFile)) {
+          appendStageLog(pipelineStage.logFile, std::string("status: failed\nerror: ") + error.what() + "\n");
+        } else {
+          writeStageLog(pipelineStage.logFile, std::string("status: failed\nerror: ") + error.what() + "\n");
+        }
+        std::cout << "      失败 (" << formatDuration(stageEntry.durationSeconds) << "): "
+                  << error.what() << "\n" << std::flush;
+        return 1;
+      }
+
       ++step;
       continue;
     }
