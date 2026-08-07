@@ -446,7 +446,11 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
                                    "--output-file",
                                    texturePly.filename().string(),
                                    "--patch-packing-heuristic",
-                                   std::to_string(config.texturePatchPackingHeuristic)});
+                                   std::to_string(config.texturePatchPackingHeuristic),
+                                   "--global-seam-leveling",
+                                   config.textureGlobalSeamLeveling ? "1" : "0",
+                                   "--local-seam-leveling",
+                                   config.textureLocalSeamLeveling ? "1" : "0"});
     appendOpenMvsThreads(textureArgs, config.maxThreads);
     appendOpenMvsCudaDevice(textureArgs, config.cudaDevice);
     pushStage(plan,

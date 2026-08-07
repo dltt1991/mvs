@@ -79,6 +79,16 @@ def build_command(args: argparse.Namespace) -> list[str]:
             "--texture-patch-packing-heuristic",
             str(args.texture_patch_packing_heuristic),
         ])
+    if args.texture_global_seam_leveling is not None:
+        command.extend([
+            "--texture-global-seam-leveling",
+            str(args.texture_global_seam_leveling),
+        ])
+    if args.texture_local_seam_leveling is not None:
+        command.extend([
+            "--texture-local-seam-leveling",
+            str(args.texture_local_seam_leveling),
+        ])
     return command
 
 
@@ -111,6 +121,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--densify-iters", type=int)
     parser.add_argument("--generate-texture", choices=["0", "1", "true", "false"])
     parser.add_argument("--texture-patch-packing-heuristic", type=int)
+    parser.add_argument("--texture-global-seam-leveling", choices=["0", "1", "true", "false"])
+    parser.add_argument("--texture-local-seam-leveling", choices=["0", "1", "true", "false"])
     return parser.parse_args()
 
 

@@ -1,4 +1,6 @@
 {
+  // ========== Inputs ==========
+
   // Input image directory.
   // Candidates: "data/images" for the default local dataset, or an absolute path to another image folder.
   // CLI override: --images
@@ -13,6 +15,8 @@
   // Candidates: "outputs/default", "outputs/<run-name>", or an absolute path on a fast local disk.
   // CLI override: --output
   "output": "outputs/default",
+
+  // ========== Runtime ==========
 
   // COLMAP command-line binary.
   // Candidates: source-build path below, package path "bin/colmap", or any system COLMAP binary.
@@ -29,20 +33,28 @@
   // CLI override: --max-threads
   "max_threads": 12,
 
-  // COLMAP image_undistorter copy policy for dense workspace images.
-  // Candidates: "HARD_LINK" = lowest IO on same filesystem; "SOFT_LINK" = symbolic links; "COPY" = portable full copy.
-  // CLI override: --undistort-copy-policy
-  "undistort_copy_policy": "HARD_LINK",
-
   // Reuse completed stages in the same output directory when marker, input snapshot, command signature, and artifacts match.
   // Candidates: false = always recompute; true = skip matching stages for iteration/failure recovery.
   // CLI override: --reuse-existing
   "reuse_existing": false,
 
-  // Remove OpenMVS .dmap intermediate depth maps after dense fusion.
-  // Candidates: true = save several GB per run; false = keep depth maps for debugging/analysis.
-  // CLI override: --remove-depth-maps
-  "remove_depth_maps": true,
+  // CUDA device used by OpenMVS DensifyPointCloud / ReconstructMesh / TextureMesh.
+  // Candidates: -1 = auto-select best GPU (OpenMVS default); 0, 1, 2... = explicit device index; -2 = force CPU.
+  // OpenMVS uses a single GPU per tool process, and pipeline stages run sequentially.
+  // CLI override: --cuda-device
+  "cuda_device": -1,
+
+  // ========== COLMAP: feature_extractor ==========
+
+  // SIFT 特征提取的 first_octave 参数（传给 COLMAP feature_extractor）。
+  // -1（默认）：上采样 2 倍后再提取，捕获高频特征，但处理像素增加 4 倍（实测约 45s）。
+  // 0：在降采样后的图像（max_image_size=3200 时为 3200×2400）直接提取，
+  //    预期耗时减半（~45s → ~20s），特征数略降但对车载场景影响通常较小。
+  // Candidates: -1（默认，最全特征）、0（标准尺度，推荐优先尝试）、1+（粗尺度，少用）。
+  // CLI override: --feature-first-octave
+  "feature_first_octave": -1,
+
+  // ========== COLMAP: matcher ==========
 
   // COLMAP matching strategy.
   // Candidates: "exhaustive" = safest for unordered photos; "sequential" = faster when photos follow a clear capture order.
@@ -61,6 +73,8 @@
   // CLI override: --sequential-quadratic-overlap
   "sequential_quadratic_overlap": true,
 
+  // ========== COLMAP: mapper ==========
+
   // Enable GPU acceleration for Bundle Adjustment in COLMAP mapper.
   // Candidates: false = default, CPU-only BA; true = GPU BA when image count >= min_num_images_gpu_solver (default 50).
   // COLMAP's feature extraction and matching already use GPU by default (use_gpu=1) without this option.
@@ -68,14 +82,21 @@
   // CLI override: --mapper-ba-use-gpu
   "mapper_ba_use_gpu": false,
 
+  // ========== COLMAP: image_undistorter ==========
+
+  // COLMAP image_undistorter copy policy for dense workspace images.
+  // Candidates: "HARD_LINK" = lowest IO on same filesystem; "SOFT_LINK" = symbolic links; "COPY" = portable full copy.
+  // CLI override: --undistort-copy-policy
+  "undistort_copy_policy": "HARD_LINK",
+
   // image_undistorter 阶段的去畸变后端。
-  // false（默认）：COLMAP image_undistorter 子进程，约 74s（41 张 6016x4512，12 线程）。
-  // true：进程内 OpenCV 后端，约 5s。几何完全复用 colmap::UndistortCamera()，
+  // false：COLMAP image_undistorter 子进程，约 74s（41 张 6016x4512，12 线程）。
+  // true（默认）：进程内 OpenCV 后端，约 5s。几何完全复用 colmap::UndistortCamera()，
   //   输出尺寸和 dense/sparse 内参与 COLMAP 后端一致（同样裁掉去畸变黑边），
   //   只把逐像素重采样换成 cv::undistort()（查表 + remap，SIMD）。
   //   之后 InterfaceCOLMAP 照常执行，两个后端的下游完全相同。
   // CLI override: --use-opencv-undistort
-  "use_opencv_undistort": false,
+  "use_opencv_undistort": true,
 
   // 去畸变图像的 JPEG 质量，两个后端都生效。
   // Candidates: -1 = 沿用后端默认（COLMAP 近无损约 11MB/张；OpenCV 95 约 5MB/张）；
@@ -83,21 +104,16 @@
   // CLI override: --undistort-jpeg-quality
   "undistort_jpeg_quality": -1,
 
-  // SIFT 特征提取的 first_octave 参数（传给 COLMAP feature_extractor）。
-  // -1（默认）：上采样 2 倍后再提取，捕获高频特征，但处理像素增加 4 倍（实测约 45s）。
-  // 0：在降采样后的图像（max_image_size=3200 时为 3200×2400）直接提取，
-  //    预期耗时减半（~45s → ~20s），特征数略降但对车载场景影响通常较小。
-  // Candidates: -1（默认，最全特征）、0（标准尺度，推荐优先尝试）、1+（粗尺度，少用）。
-  // CLI override: --feature-first-octave
-  "feature_first_octave": -1,
+  // ========== OpenMVS: InterfaceCOLMAP ==========
 
-  // CUDA device used by OpenMVS DensifyPointCloud / ReconstructMesh / TextureMesh.
-  // Candidates: -1 = auto-select best GPU (OpenMVS default); 0, 1, 2... = explicit device index; -2 = force CPU.
-  // OpenMVS uses a single GPU per tool process, and pipeline stages run sequentially,
-  // so setting this does not parallelize a single run. Use it to pin concurrent runs
-  // to different GPUs, or to avoid a busy card.
-  // CLI override: --cuda-device
-  "cuda_device": -1,
+  // No project-specific knobs yet. This stage converts COLMAP dense workspace to scene.mvs.
+
+  // ========== OpenMVS: DensifyPointCloud ==========
+
+  // Remove OpenMVS .dmap intermediate depth maps after dense fusion.
+  // Candidates: true = save several GB per run; false = keep depth maps for debugging/analysis.
+  // CLI override: --remove-depth-maps
+  "remove_depth_maps": true,
 
   // Number of neighbor views used by OpenMVS for depth-map estimation.
   // Candidates: 5 = OpenMVS default; 4 = moderate speed experiment; 3 = aggressive speed experiment.
@@ -129,6 +145,12 @@
   // CLI override: --densify-iters
   "densify_iters": 3,
 
+  // ========== OpenMVS: ReconstructMesh ==========
+
+  // No project-specific knobs yet. This stage turns scene_dense.mvs into scene_mesh.ply.
+
+  // ========== OpenMVS: TextureMesh ==========
+
   // Generate the final textured mesh after mesh reconstruction.
   // Candidates: true = full final result; false = stop after scene_mesh.ply for faster geometry preview/UI iteration.
   // CLI override: --generate-texture
@@ -137,5 +159,15 @@
   // Texture atlas patch packing heuristic used by OpenMVS TextureMesh.
   // Candidates: 100 = measured fastest with unchanged geometry/texture file count here; 3 = OpenMVS default/good speed; 0 = best-fit packing, usually slower.
   // CLI override: --texture-patch-packing-heuristic
-  "texture_patch_packing_heuristic": 100
+  "texture_patch_packing_heuristic": 100,
+
+  // OpenMVS global seam leveling balances colors across texture patch boundaries.
+  // Default off here because it produced saturated RGB/CMY artifacts on the marker-board dataset.
+  // CLI override: --texture-global-seam-leveling
+  "texture_global_seam_leveling": false,
+
+  // OpenMVS local seam leveling blends colors near texture patch boundaries.
+  // Default off here because it produced saturated RGB/CMY artifacts on the marker-board dataset.
+  // CLI override: --texture-local-seam-leveling
+  "texture_local_seam_leveling": false
 }

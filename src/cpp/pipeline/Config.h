@@ -47,11 +47,11 @@ struct Config {
   // 默认 5（邻居视图搜索范围通常 < 5）。
   int batchOverlap = 5;
   // image_undistorter 阶段的去畸变后端。
-  // false（默认）：COLMAP image_undistorter 子进程。
-  // true：进程内 OpenCV 后端。几何完全复用 colmap::UndistortCamera()，与 COLMAP
+  // false：COLMAP image_undistorter 子进程。
+  // true（默认）：进程内 OpenCV 后端。几何完全复用 colmap::UndistortCamera()，与 COLMAP
   //   后端逐位一致（同样裁掉去畸变黑边），只把重采样内核换成 cv::undistort()。
   //   实测该阶段 73.6s → ~5s；后续 InterfaceCOLMAP 照常执行。
-  bool useOpenCvUndistort = false;
+  bool useOpenCvUndistort = true;
 
   // SIFT 特征提取的 first_octave 参数（传给 COLMAP feature_extractor）。
   // -1（默认）：上采样 2 倍后再提取，捕获高频特征，但处理像素增加 4 倍。
@@ -68,6 +68,8 @@ struct Config {
   int densifyIters = 3;
   bool generateTexture = true;
   int texturePatchPackingHeuristic = 3;
+  bool textureGlobalSeamLeveling = false;
+  bool textureLocalSeamLeveling = false;
 
   std::string runName() const;
 };

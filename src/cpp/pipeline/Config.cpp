@@ -232,6 +232,8 @@ void applyConfigFile(Config& config, const std::filesystem::path& path) {
   applyJsonInt(json, "densify_iters", config.densifyIters);
   applyJsonBool(json, "generate_texture", config.generateTexture);
   applyJsonInt(json, "texture_patch_packing_heuristic", config.texturePatchPackingHeuristic);
+  applyJsonBool(json, "texture_global_seam_leveling", config.textureGlobalSeamLeveling);
+  applyJsonBool(json, "texture_local_seam_leveling", config.textureLocalSeamLeveling);
 }
 
 void requireConfigValue(const std::string& value, const std::string& name) {
@@ -377,6 +379,16 @@ Config parseArgs(int argc, char** argv) {
     config.texturePatchPackingHeuristic = parseNonNegativeInt(
         optionalOption(options, "--texture-patch-packing-heuristic", "3"),
         "--texture-patch-packing-heuristic");
+  }
+  if (hasOption(options, "--texture-global-seam-leveling")) {
+    config.textureGlobalSeamLeveling = parseBool(
+        optionalOption(options, "--texture-global-seam-leveling", "0"),
+        "--texture-global-seam-leveling");
+  }
+  if (hasOption(options, "--texture-local-seam-leveling")) {
+    config.textureLocalSeamLeveling = parseBool(
+        optionalOption(options, "--texture-local-seam-leveling", "0"),
+        "--texture-local-seam-leveling");
   }
 
   requireConfigValue(config.imagesDir, "images");

@@ -28,10 +28,12 @@ int main() {
       "--densify-iters", "2",
       "--generate-texture", "0",
       "--texture-patch-packing-heuristic", "100",
+      "--texture-global-seam-leveling", "1",
+      "--texture-local-seam-leveling", "1",
       "--use-opencv-undistort", "1",
       "--undistort-jpeg-quality", "95",
       "--feature-first-octave", "0"};
-  auto config = mvs::parseArgs(47, const_cast<char**>(argv));
+  auto config = mvs::parseArgs(51, const_cast<char**>(argv));
   assert(config.imagesDir == "data/images");
   assert(config.camerasJson == "data/cameras.json");
   assert(config.outputDir == "outputs/test-run");
@@ -52,6 +54,8 @@ int main() {
   assert(config.densifyIters == 2);
   assert(config.generateTexture == false);
   assert(config.texturePatchPackingHeuristic == 100);
+  assert(config.textureGlobalSeamLeveling == true);
+  assert(config.textureLocalSeamLeveling == true);
   assert(config.useOpenCvUndistort == true);
   assert(config.undistortJpegQuality == 95);
   assert(config.featureFirstOctave == 0);
@@ -75,8 +79,7 @@ int main() {
   assert(defaultConfig.reuseExisting == false);
   assert(defaultConfig.removeDepthMaps == true);
   assert(defaultConfig.matcher == "exhaustive");
-  // 新后端默认关闭：默认行为必须仍是 COLMAP image_undistorter 子进程
-  assert(defaultConfig.useOpenCvUndistort == false);
+  assert(defaultConfig.useOpenCvUndistort == true);
   assert(defaultConfig.undistortJpegQuality == -1);
   assert(defaultConfig.featureFirstOctave == -1);
   assert(defaultConfig.sequentialOverlap == 10);
@@ -89,6 +92,8 @@ int main() {
   assert(defaultConfig.densifyIters == 3);
   assert(defaultConfig.generateTexture == true);
   assert(defaultConfig.texturePatchPackingHeuristic == 3);
+  assert(defaultConfig.textureGlobalSeamLeveling == false);
+  assert(defaultConfig.textureLocalSeamLeveling == false);
 
   const auto configPath = std::filesystem::temp_directory_path() / "mvs_config_file_test.json";
   {
@@ -116,6 +121,8 @@ int main() {
       "densify_iters": 2,
       "generate_texture": false,
       "texture_patch_packing_heuristic": 100,
+      "texture_global_seam_leveling": true,
+      "texture_local_seam_leveling": true,
       "use_opencv_undistort": false,
       "undistort_jpeg_quality": -1,
       "feature_first_octave": 0
@@ -134,8 +141,10 @@ int main() {
       "--densify-number-views", "4",
       "--densify-max-resolution", "1920",
       "--generate-texture", "1",
-      "--texture-patch-packing-heuristic", "50"};
-  auto fileConfig = mvs::parseArgs(21, const_cast<char**>(configArgv));
+      "--texture-patch-packing-heuristic", "50",
+      "--texture-global-seam-leveling", "0",
+      "--texture-local-seam-leveling", "0"};
+  auto fileConfig = mvs::parseArgs(25, const_cast<char**>(configArgv));
   assert(fileConfig.imagesDir == "config/images");
   assert(fileConfig.camerasJson == "config/cameras.json");
   assert(fileConfig.outputDir == "outputs/from-cli");
@@ -156,6 +165,8 @@ int main() {
   assert(fileConfig.densifyIters == 2);
   assert(fileConfig.generateTexture == true);
   assert(fileConfig.texturePatchPackingHeuristic == 50);
+  assert(fileConfig.textureGlobalSeamLeveling == false);
+  assert(fileConfig.textureLocalSeamLeveling == false);
   assert(fileConfig.useOpenCvUndistort == false);
   assert(fileConfig.undistortJpegQuality == -1);
   assert(fileConfig.featureFirstOctave == 0);
@@ -180,8 +191,9 @@ int main() {
   assert(defaultFileConfig.densifyIters == 3);
   assert(defaultFileConfig.generateTexture == true);
   assert(defaultFileConfig.texturePatchPackingHeuristic == 100);
-  // 仓库默认 config 必须保持 COLMAP 后端，避免默认行为被静默改掉
-  assert(defaultFileConfig.useOpenCvUndistort == false);
+  assert(defaultFileConfig.textureGlobalSeamLeveling == false);
+  assert(defaultFileConfig.textureLocalSeamLeveling == false);
+  assert(defaultFileConfig.useOpenCvUndistort == true);
   assert(defaultFileConfig.undistortJpegQuality == -1);
 
   // JPEG 质量校验：-1 与 1-100 合法，其余必须拒绝。

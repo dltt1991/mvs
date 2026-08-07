@@ -2,6 +2,7 @@
 #include "pipeline/ReconstructionPipeline.h"
 
 #include <cassert>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -25,6 +26,13 @@ int main() {
   config.densifyMaxResolution = 2048;
   config.densifyIters = 2;
   config.texturePatchPackingHeuristic = 100;
+
+  const auto optionValue = [](const mvs::PipelineStage& stage, const std::string& option) {
+    const auto it = std::find(stage.args.begin(), stage.args.end(), option);
+    assert(it != stage.args.end());
+    assert(std::next(it) != stage.args.end());
+    return *std::next(it);
+  };
 
   mvs::CameraIntrinsics camera;
   camera.model = "SIMPLE_RADIAL";
@@ -99,6 +107,8 @@ int main() {
   assert(plan.stages[7].argsContains("scene_texture.ply"));
   assert(plan.stages[7].argsContains("--patch-packing-heuristic"));
   assert(plan.stages[7].argsContains("100"));
+  assert(optionValue(plan.stages[7], "--global-seam-leveling") == "0");
+  assert(optionValue(plan.stages[7], "--local-seam-leveling") == "0");
 
   config.generateTexture = false;
   auto meshOnlyPlan = mvs::buildPipelinePlan(config, camera);

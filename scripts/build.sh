@@ -379,6 +379,31 @@ fix_packaged_colmap_onnx_runtime_path() {
   fi
 }
 
+write_packaged_reconstruction_config() {
+  local src_config="$1"
+  local dst_config="$2"
+  python3 - "$src_config" "$dst_config" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+text = src.read_text()
+replacements = {
+    "output": "./outputs/default",
+    "colmap": "./bin",
+    "openmvs_bin": "./bin",
+}
+for key, value in replacements.items():
+    pattern = rf'("{re.escape(key)}"\s*:\s*)"[^"]*"'
+    text, count = re.subn(pattern, rf'\1"{value}"', text, count=1)
+    if count != 1:
+        raise SystemExit(f"missing config field: {key}")
+dst.write_text(text)
+PY
+}
+
 package_artifacts() {
   local package_root="${ROOT_DIR}/packages"
   PACKAGE_DIR="${package_root}/mvs-${PACKAGE_VERSION}"
@@ -403,7 +428,9 @@ package_artifacts() {
   cp "${ROOT_DIR}/scripts/reconstruct.sh" "${PACKAGE_DIR}/scripts/reconstruct.sh"
   cp "${ROOT_DIR}/scripts/run_python_ui.py" "${PACKAGE_DIR}/scripts/run_python_ui.py"
   cp "${ROOT_DIR}/scripts/report_run.py" "${PACKAGE_DIR}/scripts/report_run.py"
-  cp "${ROOT_DIR}/config/reconstruction.json" "${PACKAGE_DIR}/config/reconstruction.json"
+  write_packaged_reconstruction_config \
+    "${ROOT_DIR}/config/reconstruction.json" \
+    "${PACKAGE_DIR}/config/reconstruction.json"
   copy_dir_contents "${ROOT_DIR}/src/python" "${PACKAGE_DIR}/src/python"
   cp "${ROOT_DIR}/README.md" "${PACKAGE_DIR}/README.md"
 

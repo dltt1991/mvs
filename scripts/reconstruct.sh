@@ -94,4 +94,12 @@ if [[ -n "${MVS_TEXTURE_PATCH_PACKING_HEURISTIC:-}" ]]; then
   ARGS+=(--texture-patch-packing-heuristic "$MVS_TEXTURE_PATCH_PACKING_HEURISTIC")
 fi
 
+if [[ -n "${MVS_TEXTURE_GLOBAL_SEAM_LEVELING:-}" ]]; then
+  ARGS+=(--texture-global-seam-leveling "$MVS_TEXTURE_GLOBAL_SEAM_LEVELING")
+fi
+
+if [[ -n "${MVS_TEXTURE_LOCAL_SEAM_LEVELING:-}" ]]; then
+  ARGS+=(--texture-local-seam-leveling "$MVS_TEXTURE_LOCAL_SEAM_LEVELING")
+fi
+
 "${ARGS[@]}"
