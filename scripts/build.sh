@@ -445,11 +445,6 @@ if [[ "$CLEAN_ONLY" -eq 1 ]]; then
 fi
 
 if [[ "$PACKAGE_ONLY" -eq 0 ]]; then
-  cmake -S "$ROOT_DIR" -B "$BUILD_DIR" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_PREFIX_PATH="$(brew_prefixes boost eigen opencv@4 opencv)"
-  cmake --build "$BUILD_DIR" --parallel "$JOBS"
-
   if [[ -d "$COLMAP_SRC_DIR" ]]; then
     prepare_colmap_macos_deps
     set_colmap_onnx_args
@@ -491,6 +486,11 @@ if [[ "$PACKAGE_ONLY" -eq 0 ]]; then
   else
     echo "Skipping OpenMVS build: 3rd/openMVS-${OPENMVS_VERSION} is missing. Run scripts/fetch_3rdparty.sh first." >&2
   fi
+
+  cmake -S "$ROOT_DIR" -B "$BUILD_DIR" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH="$(brew_prefixes boost eigen opencv@4 opencv)"
+  cmake --build "$BUILD_DIR" --parallel "$JOBS"
 
   echo "Project binary: ${BUILD_DIR}/mvs_reconstruct"
   echo "Expected COLMAP binary: ${THIRD_BUILD_DIR}/colmap/src/colmap/exe/colmap"
