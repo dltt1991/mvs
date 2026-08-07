@@ -20,6 +20,7 @@ OPENMVS_TOOLS=(
   InterfaceCOLMAP
   DensifyPointCloud
   ReconstructMesh
+  Viewer
   TextureMesh
 )
 
@@ -153,6 +154,20 @@ prepare_colmap_macos_deps() {
   fi
 
   export OpenMP_ROOT="$libomp_prefix"
+}
+
+openmvs_viewer_prefixes() {
+  local prefixes
+  prefixes="$(brew_prefixes glfw)"
+  for dep in glad imgui portable-file-dialogs; do
+    if [[ -d "${ROOT_DIR}/3rd/${dep}" ]]; then
+      if [[ -n "$prefixes" ]]; then
+        prefixes+=";"
+      fi
+      prefixes+="${ROOT_DIR}/3rd/${dep}"
+    fi
+  done
+  printf '%s' "$prefixes"
 }
 
 openmvs_linker_flags() {
@@ -336,8 +351,11 @@ copy_dir_contents() {
 copy_openmvs_tool() {
   local tool="$1"
   local src="${THIRD_BUILD_DIR}/openmvs/bin/${tool}"
+  if [[ ! -e "$src" && -d "${src}.app" ]]; then
+    src="${src}.app"
+  fi
   require_file "$src" "OpenMVS tool ${tool}"
-  cp "$src" "${PACKAGE_DIR}/bin/${tool}"
+  cp -R "$src" "${PACKAGE_DIR}/bin/"
 }
 
 clean_package_metadata() {
@@ -427,7 +445,9 @@ if [[ "$CLEAN_ONLY" -eq 1 ]]; then
 fi
 
 if [[ "$PACKAGE_ONLY" -eq 0 ]]; then
-  cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
+  cmake -S "$ROOT_DIR" -B "$BUILD_DIR" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH="$(brew_prefixes boost eigen opencv@4 opencv)"
   cmake --build "$BUILD_DIR" --parallel "$JOBS"
 
   if [[ -d "$COLMAP_SRC_DIR" ]]; then
@@ -455,6 +475,7 @@ if [[ "$PACKAGE_ONLY" -eq 0 ]]; then
     require_vcglib
     OPENCV_DIR_ARG="$(opencv_dir_arg)"
     OPENMVS_LINKER_FLAGS="$(openmvs_linker_flags)"
+    OPENMVS_VIEWER_PREFIXES="$(openmvs_viewer_prefixes)"
     export VCG_ROOT="${ROOT_DIR}/3rd/vcglib"
     reset_build_dir_if_source_changed "$OPENMVS_SRC_DIR" "${THIRD_BUILD_DIR}/openmvs"
     cmake -S "$OPENMVS_SRC_DIR" -B "${THIRD_BUILD_DIR}/openmvs" \
@@ -464,7 +485,7 @@ if [[ "$PACKAGE_ONLY" -eq 0 ]]; then
       -DVCG_ROOT="${VCG_ROOT}" \
       ${OPENMVS_LINKER_FLAGS:+"-DCMAKE_EXE_LINKER_FLAGS=${OPENMVS_LINKER_FLAGS}"} \
       ${OPENCV_DIR_ARG:+"$OPENCV_DIR_ARG"} \
-      -DCMAKE_PREFIX_PATH="$(brew_prefixes boost eigen nanoflann opencv@4 opencv openimageio jpeg-xl curl libomp metis glog googletest ceres-solver suitesparse qt glew cgal sqlite3)" \
+      -DCMAKE_PREFIX_PATH="$(brew_prefixes boost eigen nanoflann opencv@4 opencv openimageio jpeg-xl curl libomp metis glog googletest ceres-solver suitesparse qt glew cgal sqlite3);${OPENMVS_VIEWER_PREFIXES}" \
       -DCMAKE_INSTALL_PREFIX="${THIRD_BUILD_DIR}/openmvs/install"
     cmake --build "${THIRD_BUILD_DIR}/openmvs" --parallel "$JOBS"
   else

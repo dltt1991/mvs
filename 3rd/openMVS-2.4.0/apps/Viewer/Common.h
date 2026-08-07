@@ -38,7 +38,9 @@
 #include "../../libs/MVS/Common.h"
 #include "../../libs/MVS/Scene.h"
 
+#ifndef OPENMVS_GLAD_EXTERNAL
 #define GLAD_GL_IMPLEMENTATION
+#endif
 #include <glad/glad.h>
 #define GLFW_INCLUDE_NONE 
 #include <GLFW/glfw3.h>

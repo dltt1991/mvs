@@ -17,6 +17,12 @@ find_package(OpenCV REQUIRED COMPONENTS core imgcodecs imgproc calib3d)
 find_package(Eigen3 REQUIRED)
 # COLMAP 的 VLFeat 用了 OpenMP（vl_imsmooth_f 经由 image/warp.cc 引入）
 find_package(OpenMP REQUIRED)
+find_package(Boost REQUIRED)
+find_package(glog CONFIG QUIET)
+find_package(gflags REQUIRED)
+find_package(Ceres REQUIRED)
+find_package(OpenSSL REQUIRED)
+find_package(OpenImageIO REQUIRED CONFIG)
 
 set(COLMAP_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/build/third_party/colmap/src/colmap)
 
@@ -37,7 +43,17 @@ target_include_directories(mvs_core
     ${CMAKE_CURRENT_SOURCE_DIR}/build/third_party/colmap/src
     ${CMAKE_CURRENT_SOURCE_DIR}/3rd/openMVS-2.4.0/libs
     ${OpenCV_INCLUDE_DIRS}
+    ${Boost_INCLUDE_DIRS}
+    ${CERES_INCLUDE_DIRS}
 )
+
+if(DEFINED glog_VERSION_MAJOR)
+  target_compile_definitions(mvs_core
+    PUBLIC
+      GLOG_VERSION_MAJOR=${glog_VERSION_MAJOR}
+      GLOG_VERSION_MINOR=${glog_VERSION_MINOR}
+  )
+endif()
 
 target_link_libraries(mvs_core
   PUBLIC
@@ -47,6 +63,9 @@ target_link_libraries(mvs_core
     # 静态库顺序敏感：libcolmap_image.a 的对象被抽出后才会去找 Camera::Rescale 等符号，
     # 而那些在 libcolmap_scene_types.a 里，所以后者必须重复出现在 image 之后。
     # image/warp.cc 还引用了 VLFeat 的 vl_imsmooth_f。
+    Boost::headers
+    Ceres::ceres
+    # COLMAP 库（只用于读取 sparse reconstruction）
     ${COLMAP_LIB_DIR}/scene/libcolmap_scene.a
     ${COLMAP_LIB_DIR}/scene/libcolmap_scene_types.a
     ${COLMAP_LIB_DIR}/image/libcolmap_image.a
@@ -58,7 +77,7 @@ target_link_libraries(mvs_core
     ${CMAKE_CURRENT_SOURCE_DIR}/build/third_party/colmap/src/thirdparty/VLFeat/libcolmap_vlfeat.a
     # 系统依赖（COLMAP 传递）
     OpenMP::OpenMP_CXX
-    pthread curl crypto glog gflags OpenImageIO OpenImageIO_Util
+    pthread curl OpenSSL::Crypto glog::glog gflags OpenImageIO::OpenImageIO OpenImageIO::OpenImageIO_Util
 )
 
 add_executable(mvs_reconstruct
