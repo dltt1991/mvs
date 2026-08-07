@@ -87,7 +87,9 @@ OpenMVS：TextureMesh 生成纹理模型
 - `feature_extractor`：提取图片特征。
 - `exhaustive_matcher`：对图片进行穷举特征匹配。
 - `mapper`：执行增量 SfM，生成稀疏模型。
-- `image_undistorter`：生成 COLMAP dense workspace。
+- `image_undistorter`：生成 COLMAP dense workspace。默认调 COLMAP 子进程（41 张图约 74s）；
+  加 `--use-opencv-undistort true` 换成进程内 OpenCV 实现（约 5s），几何与 COLMAP 一致
+  （复用 `colmap::UndistortCamera()`，同样裁掉去畸变黑边），下游阶段完全不变。
 - `InterfaceCOLMAP`：把 COLMAP dense workspace 转为 OpenMVS 场景。
 - `DensifyPointCloud`：生成稠密点云。
 - `ReconstructMesh`：生成三角网格。

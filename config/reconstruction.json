@@ -68,11 +68,20 @@
   // CLI override: --mapper-ba-use-gpu
   "mapper_ba_use_gpu": false,
 
-  // 用进程内多线程实现取代 COLMAP image_undistorter + OpenMVS InterfaceCOLMAP。
-  // true（默认）：buildScene(56ms) + undistortParallel(12线程,4.7s)，节省 ~70s。
-  // false：保留原有子进程调用，用于对比或排查问题。
-  // CLI override: --use-streaming-undistort
-  "use_streaming_undistort": true,
+  // image_undistorter 阶段的去畸变后端。
+  // false（默认）：COLMAP image_undistorter 子进程，约 74s（41 张 6016x4512，12 线程）。
+  // true：进程内 OpenCV 后端，约 5s。几何完全复用 colmap::UndistortCamera()，
+  //   输出尺寸和 dense/sparse 内参与 COLMAP 后端一致（同样裁掉去畸变黑边），
+  //   只把逐像素重采样换成 cv::undistort()（查表 + remap，SIMD）。
+  //   之后 InterfaceCOLMAP 照常执行，两个后端的下游完全相同。
+  // CLI override: --use-opencv-undistort
+  "use_opencv_undistort": false,
+
+  // 去畸变图像的 JPEG 质量，两个后端都生效。
+  // Candidates: -1 = 沿用后端默认（COLMAP 近无损约 11MB/张；OpenCV 95 约 5MB/张）；
+  //   1-100 = 显式指定。实测该参数对速度无影响（写入量减半时耗时不变），只影响质量和体积。
+  // CLI override: --undistort-jpeg-quality
+  "undistort_jpeg_quality": -1,
 
   // CUDA device used by OpenMVS DensifyPointCloud / ReconstructMesh / TextureMesh.
   // Candidates: -1 = auto-select best GPU (OpenMVS default); 0, 1, 2... = explicit device index; -2 = force CPU.

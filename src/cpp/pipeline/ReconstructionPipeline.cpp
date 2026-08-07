@@ -1,11 +1,12 @@
 #include "pipeline/ReconstructionPipeline.h"
 
 #include "pipeline/Manifest.h"
+#include "pipeline/OpenCvUndistorter.h"
 #include "pipeline/ProcessRunner.h"
-#include "pipeline/StreamingPipeline.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -162,6 +163,17 @@ void writeStageMarker(const PipelineStage& stage) {
     throw std::runtime_error("cannot write stage marker: " + stage.markerFile.string());
   }
   marker << stage.signature;
+}
+
+// 进程内阶段也要留日志，和子进程阶段的 runCommand() 行为对齐，否则无法从产物
+// 判断走的是哪个后端。
+void writeStageLog(const std::filesystem::path& logFile, const std::string& content) {
+  std::filesystem::create_directories(logFile.parent_path());
+  std::ofstream log(logFile, std::ios::trunc);
+  if (!log) {
+    throw std::runtime_error("cannot write stage log: " + logFile.string());
+  }
+  log << content;
 }
 
 void pushStage(PipelinePlan& plan,
@@ -344,6 +356,9 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
                                            "--copy_policy",
                                            config.undistortCopyPolicy};
   appendColmapThreads(undistorterArgs, "--num_threads", config.maxThreads);
+  if (config.undistortJpegQuality != -1) {
+    appendOption(undistorterArgs, "--jpeg_quality", std::to_string(config.undistortJpegQuality));
+  }
   pushStage(plan,
             stage("image_undistorter",
                   "COLMAP：图像去畸变和 dense workspace 准备",
@@ -465,20 +480,20 @@ int runPipeline(const Config& config) {
   std::filesystem::create_directories(plan.workspaceDir / "logs");
   writeSortedImageList(config.imagesDir, plan.imageListFile);
 
-  // Streaming undistort：在 stage 循环之前准备好路径，避免子进程 chdir 后相对路径失效
-  std::unique_ptr<StreamingPipeline> streamingPipeline;
-  if (config.useStreamingUndistort) {
+  // OpenCV 去畸变后端：路径要在 stage 循环之前转成绝对路径，因为子进程阶段会
+  // chdir 到输出目录，之后相对路径就失效了。
+  std::filesystem::path openCvImagesDir;
+  std::filesystem::path openCvSparseModel;
+  std::filesystem::path openCvDenseDir;
+  if (config.useOpenCvUndistort) {
     const auto cwd = std::filesystem::current_path();
-    auto toAbs = [&](const std::string& p) -> std::string {
+    auto toAbs = [&](const std::filesystem::path& p) -> std::filesystem::path {
       if (p.empty()) return p;
-      const auto fp = std::filesystem::path(p);
-      return fp.is_absolute() ? p : (cwd / fp).lexically_normal().string();
+      return p.is_absolute() ? p : (cwd / p).lexically_normal();
     };
-    Config sc = config;
-    sc.imagesDir = toAbs(config.imagesDir);
-    const auto sparseModel = plan.workspaceDir / "colmap" / "sparse" / "0";
-    std::filesystem::create_directories(plan.workspaceDir / "images");
-    streamingPipeline = std::make_unique<StreamingPipeline>(sc, sparseModel, plan.workspaceDir);
+    openCvImagesDir = toAbs(config.imagesDir);
+    openCvSparseModel = toAbs(plan.workspaceDir / "colmap" / "sparse" / "0");
+    openCvDenseDir = toAbs(plan.workspaceDir / "colmap" / "dense");
   }
 
   Manifest manifest;
@@ -516,40 +531,73 @@ int runPipeline(const Config& config) {
       continue;
     }
 
-    // ── Streaming undistort：取代 image_undistorter + interface_colmap ──────
-    if (config.useStreamingUndistort && pipelineStage.name == "image_undistorter") {
-      std::cout << "      [streaming] buildScene + undistortParallel（取代 image_undistorter）\n" << std::flush;
+    // ── 去畸变后端分派：OpenCV 后端在进程内完成，产物与 COLMAP 子进程等价 ──
+    if (config.useOpenCvUndistort && pipelineStage.name == "image_undistorter") {
+      std::cout << "      [opencv] 进程内去畸变（取代 COLMAP image_undistorter）\n" << std::flush;
       const auto t0 = std::chrono::steady_clock::now();
-      const auto jobs = streamingPipeline->buildScene();
-      const auto sceneT = elapsedSeconds(t0);
-      const auto t1 = std::chrono::steady_clock::now();
-      streamingPipeline->undistortParallel(jobs);
-      const auto totalT = elapsedSeconds(t0);
+
+      OpenCvUndistortOptions undistortOptions;
+      undistortOptions.maxThreads = config.maxThreads;
+      undistortOptions.jpegQuality = config.undistortJpegQuality;
+
       StageManifestEntry e;
       e.name = pipelineStage.name;
       e.displayName = pipelineStage.displayName;
-      e.durationSeconds = totalT;
       e.logFile = pipelineStage.logFile.string();
+
+      std::size_t numImages = 0;
+      std::string failure;
+      try {
+        numImages = runOpenCvUndistort(
+            openCvSparseModel, openCvImagesDir, openCvDenseDir, undistortOptions);
+      } catch (const std::exception& error) {
+        failure = error.what();
+      }
+      const auto duration = elapsedSeconds(t0);
+      e.durationSeconds = duration;
+
+      // 与子进程阶段一致地留下日志，避免"开关是否生效"只能靠猜。
+      writeStageLog(pipelineStage.logFile,
+                    failure.empty()
+                        ? ("backend: opencv (in-process)\nimages: " +
+                           std::to_string(numImages) + "\njpeg_quality: " +
+                           std::to_string(config.undistortJpegQuality) +
+                           "\nmax_threads: " + std::to_string(config.maxThreads) +
+                           "\nsparse_model: " + openCvSparseModel.string() +
+                           "\noutput: " + openCvDenseDir.string() + "\nstatus: ok\n")
+                        : ("backend: opencv (in-process)\nstatus: failed\nerror: " +
+                           failure + "\n"));
+
+      if (!failure.empty()) {
+        e.status = "failed";
+        manifest.stages.push_back(e);
+        manifest.status = "failed";
+        manifest.failedStage = pipelineStage.name;
+        writeManifest(manifest, manifestPath);
+        std::cout << "      失败 (" << formatDuration(duration) << "): " << failure << "\n";
+        std::cout << "      请查看日志: " << pipelineStage.logFile.string() << "\n" << std::flush;
+        return 1;
+      }
+
+      for (const auto& artifact : pipelineStage.expectedArtifacts) {
+        if (!artifactExists(artifact)) {
+          e.status = "failed";
+          manifest.stages.push_back(e);
+          manifest.status = "failed";
+          manifest.failedStage = pipelineStage.name;
+          writeManifest(manifest, manifestPath);
+          std::cout << "      失败 (" << formatDuration(duration) << ")，缺少产物: "
+                    << artifact.string() << "\n" << std::flush;
+          return 2;
+        }
+      }
+
+      writeStageMarker(pipelineStage);
       e.status = "ok";
       manifest.stages.push_back(e);
       writeManifest(manifest, manifestPath);
-      std::cout << "      完成 (" << formatDuration(totalT) << ")"
-                << "  [buildScene:" << formatDuration(sceneT)
-                << " undistort:" << formatDuration(elapsedSeconds(t1)) << "]\n" << std::flush;
-      ++step;
-      continue;
-    }
-    if (config.useStreamingUndistort && pipelineStage.name == "interface_colmap") {
-      // scene.mvs 已由 buildScene() 写入，跳过
-      StageManifestEntry e;
-      e.name = pipelineStage.name;
-      e.displayName = pipelineStage.displayName;
-      e.durationSeconds = 0.0;
-      e.logFile = pipelineStage.logFile.string();
-      e.status = "skipped";
-      manifest.stages.push_back(e);
-      writeManifest(manifest, manifestPath);
-      std::cout << "      [streaming] scene.mvs 已由 buildScene 写入，跳过\n" << std::flush;
+      std::cout << "      完成 (" << formatDuration(duration) << ")，"
+                << numImages << " 张\n" << std::flush;
       ++step;
       continue;
     }

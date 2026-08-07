@@ -70,6 +70,18 @@ int parseCudaDevice(const std::string& value, const std::string& optionName) {
   return static_cast<int>(parsed);
 }
 
+// COLMAP image_undistorter --jpeg_quality：-1 = 沿用 COLMAP 默认，否则 1..100。
+int parseJpegQuality(const std::string& value, const std::string& optionName) {
+  char* end = nullptr;
+  const long parsed = std::strtol(value.c_str(), &end, 10);
+  if (end == value.c_str() || *end != '\0' ||
+      (parsed != -1 && (parsed < 1 || parsed > 100))) {
+    throw std::invalid_argument(
+        "invalid JPEG quality for " + optionName + " (expected -1 or 1-100): " + value);
+  }
+  return static_cast<int>(parsed);
+}
+
 std::string parseCopyPolicy(const std::string& value) {
   if (value == "COPY" || value == "SOFT_LINK" || value == "HARD_LINK") {
     return value;
@@ -132,6 +144,23 @@ void applyJsonCudaDevice(const nlohmann::json& json,
   target = json[key].get<int>();
 }
 
+// 去畸变 JPEG 质量：-1 = 沿用后端默认，否则 1..100。
+void applyJsonJpegQuality(const nlohmann::json& json,
+                          const std::string& key,
+                          int& target) {
+  if (!json.contains(key)) {
+    return;
+  }
+  if (!json[key].is_number_integer()) {
+    throw std::invalid_argument("config field must be an integer: " + key);
+  }
+  const int value = json[key].get<int>();
+  if (value != -1 && (value < 1 || value > 100)) {
+    throw std::invalid_argument("config field must be -1 or 1-100: " + key);
+  }
+  target = value;
+}
+
 void applyJsonBool(const nlohmann::json& json,
                    const std::string& key,
                    bool& target) {
@@ -164,6 +193,7 @@ void applyConfigFile(Config& config, const std::filesystem::path& path) {
   applyJsonString(json, "openmvs_bin", config.openMvsBinDir);
   applyJsonInt(json, "max_threads", config.maxThreads);
   applyJsonString(json, "undistort_copy_policy", config.undistortCopyPolicy);
+  applyJsonJpegQuality(json, "undistort_jpeg_quality", config.undistortJpegQuality);
   applyJsonBool(json, "reuse_existing", config.reuseExisting);
   applyJsonBool(json, "remove_depth_maps", config.removeDepthMaps);
   applyJsonString(json, "matcher", config.matcher);
@@ -174,7 +204,7 @@ void applyConfigFile(Config& config, const std::filesystem::path& path) {
   applyJsonBool(json, "enable_batched_pipeline", config.enableBatchedPipeline);
   applyJsonInt(json, "batch_size", config.batchSize);
   applyJsonInt(json, "batch_overlap", config.batchOverlap);
-  applyJsonBool(json, "use_streaming_undistort", config.useStreamingUndistort);
+  applyJsonBool(json, "use_opencv_undistort", config.useOpenCvUndistort);
   applyJsonInt(json, "densify_number_views", config.densifyNumberViews);
   applyJsonInt(json, "densify_number_views_fuse", config.densifyNumberViewsFuse);
   applyJsonInt(json, "densify_geometric_iters", config.densifyGeometricIters);
@@ -231,6 +261,16 @@ Config parseArgs(int argc, char** argv) {
         optionalOption(options, "--undistort-copy-policy", "HARD_LINK"));
   } else {
     config.undistortCopyPolicy = parseCopyPolicy(config.undistortCopyPolicy);
+  }
+  if (hasOption(options, "--use-opencv-undistort")) {
+    config.useOpenCvUndistort = parseBool(
+        optionalOption(options, "--use-opencv-undistort", "0"),
+        "--use-opencv-undistort");
+  }
+  if (hasOption(options, "--undistort-jpeg-quality")) {
+    config.undistortJpegQuality = parseJpegQuality(
+        optionalOption(options, "--undistort-jpeg-quality", "-1"),
+        "--undistort-jpeg-quality");
   }
   if (hasOption(options, "--reuse-existing")) {
     config.reuseExisting = parseBool(optionalOption(options, "--reuse-existing", "0"), "--reuse-existing");
