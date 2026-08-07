@@ -77,6 +77,7 @@ int main() {
   assert(plan.stages[3].name == "scale_restore");
   assert(plan.stages[3].displayName == "COLMAP：按 cameras.json 外参恢复尺度");
   assert(plan.stages[3].expectedArtifacts[0] == std::filesystem::path("outputs/test-run/colmap/sparse_scaled"));
+  assert(optionValue(plan.stages[3], "--output_path") == "outputs/test-run/colmap/sparse_scaled");
   assert(plan.stages[4].argsContains("--num_threads"));
   assert(plan.stages[4].argsContains("--copy_policy"));
   assert(plan.stages[4].argsContains("HARD_LINK"));

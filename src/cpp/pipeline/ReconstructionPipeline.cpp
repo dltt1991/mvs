@@ -424,7 +424,12 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
   pushStage(plan,
             stage("scale_restore",
                   "COLMAP：按 cameras.json 外参恢复尺度",
-                  {config.colmapBinary, "model_aligner"},
+                  {config.colmapBinary,
+                   "model_aligner",
+                   "--input_path",
+                   sparseModel.string(),
+                   "--output_path",
+                   scaledSparseModel.string()},
                   {scaledSparseModel},
                   inputStamp,
                   dependencySignature,
@@ -673,6 +678,10 @@ int runPipeline(const Config& config) {
           } else {
             std::error_code error;
             std::filesystem::remove_all(scaledSparseModel, error);
+            std::filesystem::create_directories(scaledSparseModel, error);
+            if (error) {
+              throw std::runtime_error("cannot create sparse scale output: " + scaledSparseModel.string());
+            }
             std::vector<std::string> alignArgs{config.colmapBinary,
                                                "model_aligner",
                                                "--input_path",
