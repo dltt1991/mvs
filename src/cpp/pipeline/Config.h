@@ -53,6 +53,13 @@ struct Config {
   //   实测该阶段 73.6s → ~5s；后续 InterfaceCOLMAP 照常执行。
   bool useOpenCvUndistort = false;
 
+  // SIFT 特征提取的 first_octave 参数（传给 COLMAP feature_extractor）。
+  // -1（默认）：上采样 2 倍后再提取，捕获高频特征，但处理像素增加 4 倍。
+  // 0：在降采样后的图像（max_image_size=3200 时为 3200×2400）直接提取，
+  //    预期耗时减半（~45s → ~20s），特征数略降但对车载场景影响小。
+  // 候选值：-1（默认，最全特征）、0（标准尺度）、1（粗尺度，不推荐）。
+  int featureFirstOctave = -1;
+
   int densifyNumberViews = 5;
   int densifyNumberViewsFuse = 2;
   int densifyGeometricIters = 2;

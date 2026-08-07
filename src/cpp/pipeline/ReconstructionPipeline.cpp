@@ -288,6 +288,10 @@ PipelinePlan buildPipelinePlan(const Config& config, const CameraIntrinsics& cam
                                        "--ImageReader.camera_params",
                                        cameraParams};
   appendColmapThreads(featureArgs, "--FeatureExtraction.num_threads", config.maxThreads);
+  if (config.featureFirstOctave != -1) {
+    featureArgs.push_back("--SiftExtraction.first_octave");
+    featureArgs.push_back(std::to_string(config.featureFirstOctave));
+  }
   pushStage(plan,
             stage("feature_extractor",
                   "COLMAP / pycolmap：特征提取",

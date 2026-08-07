@@ -161,6 +161,24 @@ void applyJsonJpegQuality(const nlohmann::json& json,
   target = value;
 }
 
+// SIFT first_octave：-1（上采样）、0（标准）、1+（下采样，少用）。
+// COLMAP 接受 -1~4，但 >1 的语义是跳过低频金字塔，车载场景几乎不用。
+void applyJsonFirstOctave(const nlohmann::json& json,
+                          const std::string& key,
+                          int& target) {
+  if (!json.contains(key)) {
+    return;
+  }
+  if (!json[key].is_number_integer()) {
+    throw std::invalid_argument("config field must be an integer: " + key);
+  }
+  const int value = json[key].get<int>();
+  if (value < -1 || value > 4) {
+    throw std::invalid_argument("config field must be -1 to 4: " + key);
+  }
+  target = value;
+}
+
 void applyJsonBool(const nlohmann::json& json,
                    const std::string& key,
                    bool& target) {
@@ -205,6 +223,7 @@ void applyConfigFile(Config& config, const std::filesystem::path& path) {
   applyJsonInt(json, "batch_size", config.batchSize);
   applyJsonInt(json, "batch_overlap", config.batchOverlap);
   applyJsonBool(json, "use_opencv_undistort", config.useOpenCvUndistort);
+  applyJsonFirstOctave(json, "feature_first_octave", config.featureFirstOctave);
   applyJsonInt(json, "densify_number_views", config.densifyNumberViews);
   applyJsonInt(json, "densify_number_views_fuse", config.densifyNumberViewsFuse);
   applyJsonInt(json, "densify_geometric_iters", config.densifyGeometricIters);
@@ -271,6 +290,19 @@ Config parseArgs(int argc, char** argv) {
     config.undistortJpegQuality = parseJpegQuality(
         optionalOption(options, "--undistort-jpeg-quality", "-1"),
         "--undistort-jpeg-quality");
+  }
+  if (hasOption(options, "--feature-first-octave")) {
+    const std::string value = optionalOption(options, "--feature-first-octave", "-1");
+    try {
+      const int parsed = std::stoi(value);
+      if (parsed < -1 || parsed > 4) {
+        throw std::invalid_argument("expected -1 to 4");
+      }
+      config.featureFirstOctave = parsed;
+    } catch (const std::exception& e) {
+      throw std::invalid_argument("invalid value for --feature-first-octave: " + value +
+                                  " (" + e.what() + ")");
+    }
   }
   if (hasOption(options, "--reuse-existing")) {
     config.reuseExisting = parseBool(optionalOption(options, "--reuse-existing", "0"), "--reuse-existing");

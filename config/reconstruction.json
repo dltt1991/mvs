@@ -83,6 +83,14 @@
   // CLI override: --undistort-jpeg-quality
   "undistort_jpeg_quality": -1,
 
+  // SIFT 特征提取的 first_octave 参数（传给 COLMAP feature_extractor）。
+  // -1（默认）：上采样 2 倍后再提取，捕获高频特征，但处理像素增加 4 倍（实测约 45s）。
+  // 0：在降采样后的图像（max_image_size=3200 时为 3200×2400）直接提取，
+  //    预期耗时减半（~45s → ~20s），特征数略降但对车载场景影响通常较小。
+  // Candidates: -1（默认，最全特征）、0（标准尺度，推荐优先尝试）、1+（粗尺度，少用）。
+  // CLI override: --feature-first-octave
+  "feature_first_octave": -1,
+
   // CUDA device used by OpenMVS DensifyPointCloud / ReconstructMesh / TextureMesh.
   // Candidates: -1 = auto-select best GPU (OpenMVS default); 0, 1, 2... = explicit device index; -2 = force CPU.
   // OpenMVS uses a single GPU per tool process, and pipeline stages run sequentially,

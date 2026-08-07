@@ -29,8 +29,9 @@ int main() {
       "--generate-texture", "0",
       "--texture-patch-packing-heuristic", "100",
       "--use-opencv-undistort", "1",
-      "--undistort-jpeg-quality", "95"};
-  auto config = mvs::parseArgs(45, const_cast<char**>(argv));
+      "--undistort-jpeg-quality", "95",
+      "--feature-first-octave", "0"};
+  auto config = mvs::parseArgs(47, const_cast<char**>(argv));
   assert(config.imagesDir == "data/images");
   assert(config.camerasJson == "data/cameras.json");
   assert(config.outputDir == "outputs/test-run");
@@ -53,6 +54,7 @@ int main() {
   assert(config.texturePatchPackingHeuristic == 100);
   assert(config.useOpenCvUndistort == true);
   assert(config.undistortJpegQuality == 95);
+  assert(config.featureFirstOctave == 0);
   assert(config.runName() == "test-run");
 
   const char* defaultArgv[] = {
@@ -76,6 +78,7 @@ int main() {
   // 新后端默认关闭：默认行为必须仍是 COLMAP image_undistorter 子进程
   assert(defaultConfig.useOpenCvUndistort == false);
   assert(defaultConfig.undistortJpegQuality == -1);
+  assert(defaultConfig.featureFirstOctave == -1);
   assert(defaultConfig.sequentialOverlap == 10);
   assert(defaultConfig.sequentialQuadraticOverlap == true);
   assert(defaultConfig.densifyNumberViews == 5);
@@ -112,7 +115,10 @@ int main() {
       "densify_max_resolution": 2048,
       "densify_iters": 2,
       "generate_texture": false,
-      "texture_patch_packing_heuristic": 100
+      "texture_patch_packing_heuristic": 100,
+      "use_opencv_undistort": false,
+      "undistort_jpeg_quality": -1,
+      "feature_first_octave": 0
     })";
   }
 
@@ -150,6 +156,9 @@ int main() {
   assert(fileConfig.densifyIters == 2);
   assert(fileConfig.generateTexture == true);
   assert(fileConfig.texturePatchPackingHeuristic == 50);
+  assert(fileConfig.useOpenCvUndistort == false);
+  assert(fileConfig.undistortJpegQuality == -1);
+  assert(fileConfig.featureFirstOctave == 0);
 
   const auto repoRoot = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path();
   std::filesystem::current_path(repoRoot);
@@ -201,6 +210,32 @@ int main() {
   assert(parseQuality("1").undistortJpegQuality == 1);
   assert(parseQuality("100").undistortJpegQuality == 100);
   assert(parseQuality("-1").undistortJpegQuality == -1);
+
+  // featureFirstOctave 校验：-1 到 4 合法，其余必须拒绝。
+  const auto parseFirstOctave = [](const char* value) {
+    const char* fArgv[] = {
+        "mvs_reconstruct",
+        "--images", "data/images",
+        "--cameras", "data/cameras.json",
+        "--output", "outputs/f",
+        "--colmap", "colmap",
+        "--openmvs-bin", "openmvs/bin",
+        "--feature-first-octave", value};
+    return mvs::parseArgs(13, const_cast<char**>(fArgv));
+  };
+  for (const char* bad : {"-2", "5", "abc", ""}) {
+    bool threw = false;
+    try {
+      parseFirstOctave(bad);
+    } catch (const std::invalid_argument&) {
+      threw = true;
+    }
+    assert(threw);
+  }
+  assert(parseFirstOctave("-1").featureFirstOctave == -1);
+  assert(parseFirstOctave("0").featureFirstOctave == 0);
+  assert(parseFirstOctave("1").featureFirstOctave == 1);
+  assert(parseFirstOctave("4").featureFirstOctave == 4);
 
   return 0;
 }

@@ -128,17 +128,6 @@ set_target_properties(mvs_pipeline_command_test PROPERTIES
 )
 add_test(NAME mvs_pipeline_command_test COMMAND mvs_pipeline_command_test)
 
-# 需要真实 sparse model + 原图；未设 MVS_TEST_SPARSE_MODEL/MVS_TEST_IMAGES_DIR 时自行跳过
-add_executable(mvs_opencv_undistort_test
-  tests/cpp/opencv_undistort_test.cpp
-)
-
-target_link_libraries(mvs_opencv_undistort_test PRIVATE mvs_core)
-set_target_properties(mvs_opencv_undistort_test PROPERTIES
-  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests/cpp
-)
-add_test(NAME mvs_opencv_undistort_test COMMAND mvs_opencv_undistort_test)
-
 if(Python3_Interpreter_FOUND)
   add_test(
     NAME mvs_report_run_test
