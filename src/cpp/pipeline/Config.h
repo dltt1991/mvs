@@ -13,6 +13,9 @@ struct Config {
   std::string openMvsBinDir;
   int maxThreads = 0;
   std::string undistortCopyPolicy = "HARD_LINK";
+  // 去畸变图像的 JPEG 质量，两个后端都生效。-1 = 沿用各后端默认
+  // （COLMAP 近无损；OpenCV 95）；否则 1-100。
+  int undistortJpegQuality = -1;
   bool reuseExisting = false;
   bool removeDepthMaps = true;
   std::string matcher = "exhaustive";
@@ -43,10 +46,12 @@ struct Config {
   // 每批 undistort 时会额外处理前后各 overlap 张图。
   // 默认 5（邻居视图搜索范围通常 < 5）。
   int batchOverlap = 5;
-  // 用进程内多线程实现取代 COLMAP image_undistorter + OpenMVS InterfaceCOLMAP。
-  // true（默认）：buildScene(56ms) + undistortParallel(12线程,4.7s) 取代串行74s。
-  // false：保留原有子进程调用，用于对比或排查问题。
-  bool useStreamingUndistort = true;
+  // image_undistorter 阶段的去畸变后端。
+  // false（默认）：COLMAP image_undistorter 子进程。
+  // true：进程内 OpenCV 后端。几何完全复用 colmap::UndistortCamera()，与 COLMAP
+  //   后端逐位一致（同样裁掉去畸变黑边），只把重采样内核换成 cv::undistort()。
+  //   实测该阶段 73.6s → ~5s；后续 InterfaceCOLMAP 照常执行。
+  bool useOpenCvUndistort = false;
 
   int densifyNumberViews = 5;
   int densifyNumberViewsFuse = 2;

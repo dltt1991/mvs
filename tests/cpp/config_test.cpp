@@ -3,6 +3,7 @@
 #include <cassert>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 
 int main() {
   const char* argv[] = {
@@ -26,8 +27,10 @@ int main() {
       "--densify-max-resolution", "2048",
       "--densify-iters", "2",
       "--generate-texture", "0",
-      "--texture-patch-packing-heuristic", "100"};
-  auto config = mvs::parseArgs(41, const_cast<char**>(argv));
+      "--texture-patch-packing-heuristic", "100",
+      "--use-opencv-undistort", "1",
+      "--undistort-jpeg-quality", "95"};
+  auto config = mvs::parseArgs(45, const_cast<char**>(argv));
   assert(config.imagesDir == "data/images");
   assert(config.camerasJson == "data/cameras.json");
   assert(config.outputDir == "outputs/test-run");
@@ -48,6 +51,8 @@ int main() {
   assert(config.densifyIters == 2);
   assert(config.generateTexture == false);
   assert(config.texturePatchPackingHeuristic == 100);
+  assert(config.useOpenCvUndistort == true);
+  assert(config.undistortJpegQuality == 95);
   assert(config.runName() == "test-run");
 
   const char* defaultArgv[] = {
@@ -68,6 +73,9 @@ int main() {
   assert(defaultConfig.reuseExisting == false);
   assert(defaultConfig.removeDepthMaps == true);
   assert(defaultConfig.matcher == "exhaustive");
+  // 新后端默认关闭：默认行为必须仍是 COLMAP image_undistorter 子进程
+  assert(defaultConfig.useOpenCvUndistort == false);
+  assert(defaultConfig.undistortJpegQuality == -1);
   assert(defaultConfig.sequentialOverlap == 10);
   assert(defaultConfig.sequentialQuadraticOverlap == true);
   assert(defaultConfig.densifyNumberViews == 5);
@@ -163,5 +171,36 @@ int main() {
   assert(defaultFileConfig.densifyIters == 3);
   assert(defaultFileConfig.generateTexture == true);
   assert(defaultFileConfig.texturePatchPackingHeuristic == 100);
+  // 仓库默认 config 必须保持 COLMAP 后端，避免默认行为被静默改掉
+  assert(defaultFileConfig.useOpenCvUndistort == false);
+  assert(defaultFileConfig.undistortJpegQuality == -1);
+
+  // JPEG 质量校验：-1 与 1-100 合法，其余必须拒绝。
+  // 今天踩过"参数被静默忽略"的坑（parseArgs 里没 handler 的参数会被丢弃且不报错），
+  // 这里显式钉住非法值一定抛异常。
+  const auto parseQuality = [](const char* value) {
+    const char* qArgv[] = {
+        "mvs_reconstruct",
+        "--images", "data/images",
+        "--cameras", "data/cameras.json",
+        "--output", "outputs/q",
+        "--colmap", "colmap",
+        "--openmvs-bin", "openmvs/bin",
+        "--undistort-jpeg-quality", value};
+    return mvs::parseArgs(13, const_cast<char**>(qArgv));
+  };
+  for (const char* bad : {"0", "101", "-2", "abc", ""}) {
+    bool threw = false;
+    try {
+      parseQuality(bad);
+    } catch (const std::invalid_argument&) {
+      threw = true;
+    }
+    assert(threw);
+  }
+  assert(parseQuality("1").undistortJpegQuality == 1);
+  assert(parseQuality("100").undistortJpegQuality == 100);
+  assert(parseQuality("-1").undistortJpegQuality == -1);
+
   return 0;
 }
