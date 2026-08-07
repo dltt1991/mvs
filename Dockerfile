@@ -112,6 +112,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xorg-dev \
         libgl-dev \
         libglu1-mesa-dev \
+        # OpenMVS Viewer 依赖。glad/imgui/portable-file-dialogs 已 vendored 在 3rd/ 下，
+        # 只有 glfw3 是系统依赖；缺它时 apps/Viewer/CMakeLists.txt 会 RETURN() 静默跳过。
+        libglfw3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # COLMAP 官方文档建议为 Ubuntu 下 OpenImageIO 的 CMake 配置准备该目录

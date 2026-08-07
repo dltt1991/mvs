@@ -16,12 +16,18 @@ FAISS_SRC_DIR="${ROOT_DIR}/3rd/faiss"
 PACKAGE_VERSION=""
 PACKAGE_ONLY=0
 CLEAN_ONLY=0
+# 重建管线必需的工具，缺任何一个都应让打包失败。
 OPENMVS_TOOLS=(
   InterfaceCOLMAP
   DensifyPointCloud
   ReconstructMesh
-  Viewer
   TextureMesh
+)
+
+# 可选工具：存在就打包，缺失只警告。Viewer 是 GUI 程序，依赖 glfw3，
+# 且在无显示的服务器容器里也跑不起来——它缺失不该让整个包残缺。
+OPENMVS_OPTIONAL_TOOLS=(
+  Viewer
 )
 
 usage() {
@@ -156,15 +162,47 @@ prepare_colmap_macos_deps() {
   export OpenMP_ROOT="$libomp_prefix"
 }
 
+# 探测 Linux 上的 glfw3 CMake 配置包，仅用于给出提示。
+find_glfw3_cmake_config() {
+  local dir
+  for dir in /usr/lib/*/cmake/glfw3 /usr/lib/cmake/glfw3 /usr/local/lib/cmake/glfw3; do
+    if [[ -d "$dir" ]]; then
+      printf '%s' "$dir"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# OpenMVS Viewer 的四个依赖：glad / glfw3 / imgui / portable-file-dialogs。
+# 任一缺失时 apps/Viewer/CMakeLists.txt 会 RETURN() 静默跳过 Viewer target
+# （OpenMVS 构建照常成功，只是 bin/ 下没有 Viewer），所以这里要把路径喂全。
+#
+# glad / imgui / portable-file-dialogs 已 vendored 在 3rd/ 下，跨平台通用。
+# glfw3 是系统依赖，按平台获取：
+#   macOS  —— brew --prefix glfw
+#   Linux  —— libglfw3-dev 装在标准路径（/usr/lib/<triplet>/cmake/glfw3），
+#             FIND_PACKAGE 直接能找到，无需显式 prefix；缺包时给出可操作提示。
 openmvs_viewer_prefixes() {
-  local prefixes
-  prefixes="$(brew_prefixes glfw)"
+  local prefixes=""
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    prefixes="$(brew_prefixes glfw)"
+    if [[ -z "$prefixes" ]]; then
+      echo "Note: glfw not found via brew; OpenMVS Viewer will be skipped. Install with: brew install glfw" >&2
+    fi
+  elif ! find_glfw3_cmake_config >/dev/null; then
+    echo "Note: glfw3 development files not found; OpenMVS Viewer will be skipped." >&2
+    echo "      Install with: apt-get install libglfw3-dev" >&2
+  fi
   for dep in glad imgui portable-file-dialogs; do
     if [[ -d "${ROOT_DIR}/3rd/${dep}" ]]; then
       if [[ -n "$prefixes" ]]; then
         prefixes+=";"
       fi
       prefixes+="${ROOT_DIR}/3rd/${dep}"
+    else
+      echo "Note: 3rd/${dep} is missing; OpenMVS Viewer will be skipped." >&2
+      echo "      Run scripts/fetch_3rdparty.sh to fetch it." >&2
     fi
   done
   printf '%s' "$prefixes"
@@ -348,13 +386,38 @@ copy_dir_contents() {
   cp -R "${src}/." "$dst/"
 }
 
-copy_openmvs_tool() {
+# 解析工具产物路径。macOS 上 MACOSX_BUNDLE 的 Viewer 产出的是 Viewer.app 目录
+# 而非裸二进制，所以要兼容两种形态。找到则打印路径并返回 0，否则返回 1。
+resolve_openmvs_tool() {
   local tool="$1"
   local src="${THIRD_BUILD_DIR}/openmvs/bin/${tool}"
   if [[ ! -e "$src" && -d "${src}.app" ]]; then
     src="${src}.app"
   fi
-  require_file "$src" "OpenMVS tool ${tool}"
+  if [[ -e "$src" ]]; then
+    printf '%s' "$src"
+    return 0
+  fi
+  return 1
+}
+
+copy_openmvs_tool() {
+  local tool="$1"
+  local src
+  if ! src="$(resolve_openmvs_tool "$tool")"; then
+    require_file "${THIRD_BUILD_DIR}/openmvs/bin/${tool}" "OpenMVS tool ${tool}"
+  fi
+  cp -R "$src" "${PACKAGE_DIR}/bin/"
+}
+
+# 可选工具：缺失时警告并跳过，不中断打包。
+copy_optional_openmvs_tool() {
+  local tool="$1"
+  local src
+  if ! src="$(resolve_openmvs_tool "$tool")"; then
+    echo "Note: optional OpenMVS tool ${tool} not built; skipping it in the package." >&2
+    return 0
+  fi
   cp -R "$src" "${PACKAGE_DIR}/bin/"
 }
 
@@ -423,6 +486,9 @@ package_artifacts() {
   cp "${THIRD_BUILD_DIR}/colmap/src/colmap/exe/colmap" "${PACKAGE_DIR}/bin/colmap"
   for tool in "${OPENMVS_TOOLS[@]}"; do
     copy_openmvs_tool "$tool"
+  done
+  for tool in "${OPENMVS_OPTIONAL_TOOLS[@]}"; do
+    copy_optional_openmvs_tool "$tool"
   done
 
   cp "${ROOT_DIR}/scripts/reconstruct.sh" "${PACKAGE_DIR}/scripts/reconstruct.sh"
