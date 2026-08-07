@@ -25,6 +25,9 @@ services:
       - ${MVS_WORK_DIR:-/data/taoguo/mvs-workspace}/build:/workspace/build
       - ${MVS_WORK_DIR:-/data/taoguo/mvs-workspace}/outputs:/workspace/outputs
       - ${MVS_WORK_DIR:-/data/taoguo/mvs-workspace}/packages:/workspace/packages
+      # 数据集也放本地 ext4：原图读取在特征提取阶段是 CPU/IO 密集环节
+      # 注意此挂载会覆盖仓库里的 data/，容器内看到的是 MVS_WORK_DIR/data。
+      - ${MVS_WORK_DIR:-/data/taoguo/mvs-workspace}/data:/workspace/data
       # COLMAP 的 poselib/faiss 依赖走 git+ssh 拉取（见
       # 3rd/colmap-4.1.1/src/thirdparty/CMakeLists.txt），需要宿主机的 GitHub 私钥。
       # 只读挂载；镜像里 uid 1000 是基础镜像自带的 ubuntu 用户，HOME=/home/ubuntu。
